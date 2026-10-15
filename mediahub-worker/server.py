@@ -1,4 +1,4 @@
-import os,time,hmac,hashlib,uuid,subprocess,shutil,threading,re,json,zipfile
+import os,time,hmac,hashlib,uuid,subprocess,shutil,threading,re,json,zipfile,base64
 from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -7,16 +7,111 @@ import httpx
 from fastapi import FastAPI,Header,HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from yt_dlp import YoutubeDL
+
 app=FastAPI(docs_url=None,redoc_url=None)
-DATA=Path('/tmp/bmediahub');DATA.mkdir(parents=True,exist_ok=True)
+DATA=Path(os.getenv('MEDIA_DATA_DIR','/tmp/bmediahub'));DATA.mkdir(parents=True,exist_ok=True)
 jobs={};lock=threading.Lock();pool=ThreadPoolExecutor(max_workers=2)
 hosts=('youtu.be','youtube.com','tiktok.com','instagram.com','facebook.com','fb.watch')
+PHOTO_EXT=('.jpg','.jpeg','.png','.webp');VIDEO_EXT=('.mp4','.webm')
+DAILY_LIMIT=int(os.getenv('DAILY_LIMIT','10'))
+JOB_FILES_TTL=2*3600   # downloaded files / photo buttons stay valid this long
+JOB_META_TTL=86400     # light job records are kept for the daily quota window
+IG_RE=re.compile(r'/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]+)')
+
+# ---------- WARP egress (YouTube only) ----------
+# YouTube rejects Render's datacenter IP. A free Cloudflare WARP identity exposed as a local SOCKS5 proxy
+# (userspace WireGuard via wireproxy, IPv4 only) was measured to pass the bot check from Render.
+WARP_ON=os.getenv('WARP_ENABLED','1')=='1'
+WARP_PORT=1080
+WARP_PROXY='socks5://127.0.0.1:%d'%WARP_PORT   # local DNS + -4 => tunnel only carries IPv4
+WARP_DIR=Path('/tmp/warp')
+WARP={'up':False,'proc':None}
+YT_CLIENTS=(None,'mweb','android_vr')
+RETRYABLE=('not a bot','sign in','403','forbidden','page needs to be reloaded','requested format','timeout','429','too many requests')
+
+def warp_check():
+ try:
+  p=subprocess.run(['curl','-s','-4','-m','12','--proxy',WARP_PROXY,'https://www.cloudflare.com/cdn-cgi/trace'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=20)
+  return 'warp=on' in p.stdout or 'warp=plus' in p.stdout
+ except Exception:return False
+
+def warp_stop():
+ p=WARP.get('proc')
+ if p:
+  try:
+   p.terminate();p.wait(5)
+  except Exception:
+   try:p.kill()
+   except Exception:pass
+ WARP['proc']=None;WARP['up']=False
+
+def warp_build_conf():
+ shutil.rmtree(WARP_DIR,ignore_errors=True);WARP_DIR.mkdir(parents=True)
+ for argv in (['wgcf','register','--accept-tos'],['wgcf','generate']):
+  r=subprocess.run(argv,cwd=WARP_DIR,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=60)
+  if r.returncode:return False
+ lines=[]
+ for line in (WARP_DIR/'wgcf-profile.conf').read_text().splitlines():
+  if line.startswith('Address'):
+   addrs=[a.strip() for a in line.split('=',1)[1].split(',') if ':' not in a]
+   line='Address = '+', '.join(addrs)
+  elif line.startswith('AllowedIPs'):line='AllowedIPs = 0.0.0.0/0'
+  lines.append(line)
+ (WARP_DIR/'wireproxy.conf').write_text('\n'.join(lines)+'\n[Socks5]\nBindAddress = 127.0.0.1:%d\n'%WARP_PORT)
+ return True
+
+def warp_supervisor():
+ fails=0
+ while WARP_ON:
+  try:
+   proc=WARP['proc']
+   if proc is None or proc.poll() is not None or not WARP['up']:
+    warp_stop()
+    if warp_build_conf():
+     WARP['proc']=subprocess.Popen(['wireproxy','-c',str(WARP_DIR/'wireproxy.conf')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+     time.sleep(6)
+     WARP['up']=warp_check()
+    fails=0 if WARP['up'] else fails+1
+    print('warp state up=',WARP['up'],flush=True)
+   else:WARP['up']=warp_check()
+  except Exception as e:print('warp supervisor error',type(e).__name__,flush=True)
+  time.sleep(60 if WARP['up'] else min(300,30*(fails+1)))
+
+def yt_attempts():
+ out=[(c,WARP_PROXY) for c in YT_CLIENTS] if WARP['up'] else []
+ out.append((None,None))   # direct as the last resort
+ return out
+
+def retryable(err):
+ e=str(err).lower();return any(k in e for k in RETRYABLE)
+
+# ---------- instagram cookies (optional, from a secondary account) ----------
+def load_ig_cookies():
+ b=os.getenv('IG_COOKIES_B64','').strip()
+ if not b:return
+ try:
+  f=DATA/'ig_cookies.txt';f.write_bytes(base64.b64decode(b));os.chmod(f,0o600)
+ except Exception:print('ig cookies could not be decoded',flush=True)
+
+def ig_cookie_file():
+ f=DATA/'ig_cookies.txt'
+ return str(f) if f.exists() else None
+
+# ---------- helpers ----------
 def check_url(url):
  try:
   u=urlsplit(url);h=(u.hostname or '').lower().strip('.')
   return u.scheme=='https' and not u.username and not u.password and len(url)<1800 and any(h==x or h.endswith('.'+x) for x in hosts)
  except: return False
+
+def normalize(url):
+ """Instagram links come with tracking params and /reels/ or /user/reel/ shapes; reduce them to /reel|p|tv/<code>/."""
+ u=urlsplit(url);h=(u.hostname or '').lower()
+ if h.endswith('instagram.com') and not u.path.startswith('/share/'):
+  m=IG_RE.search(u.path)
+  if m:return 'https://www.instagram.com/%s/%s/'%('reel' if m.group(1).startswith('reel') else m.group(1),m.group(2))
+ return url
+
 def auth(v):
  k=os.getenv('MEDIA_WORKER_SECRET','')
  if not k or not v or not hmac.compare_digest(k,v):raise HTTPException(403,'Unauthorized')
@@ -53,73 +148,137 @@ def run_limited(argv,timeout):
  except subprocess.TimeoutExpired:
   raise RuntimeError('timeout after '+str(timeout)+'s')
 
-def probe(url,client=None):
- cmd=['yt-dlp','--dump-single-json','--skip-download','--no-playlist','--no-warnings','--socket-timeout','12','--extractor-retries','1','--retries','1']
+def ytdlp(url,extra,timeout,proxy=None,client=None,cookies=None):
+ cmd=['yt-dlp','--no-playlist','--no-warnings','--socket-timeout','15','--retries','1','--extractor-retries','1']+extra
  if client:cmd+=['--extractor-args','youtube:player_client='+client]
- cmd.append(url)
- p=run_limited(cmd,45)
+ if proxy:cmd+=['--proxy',proxy,'-4']
+ if cookies:cmd+=['--cookies',cookies]
+ return run_limited(cmd+[url],timeout)
+
+def probe(url,client=None,proxy=None,cookies=None):
+ p=ytdlp(url,['--dump-single-json','--skip-download'],45,proxy,client,cookies)
  if p.returncode:raise RuntimeError((p.stderr or p.stdout)[-900:])
  try:return json.loads(p.stdout)
  except Exception:raise RuntimeError('yt-dlp returned invalid metadata')
 
-def gallery_files(url,folder):
+def youtube_probe(job):
+ last=None
+ for client,proxy in yt_attempts():
+  try:
+   info=probe(job['url'],client,proxy);job['yt']=(client,proxy);return info
+  except Exception as e:
+   last=e;print('youtube attempt failed',client,bool(proxy),str(e)[:120].replace('\n',' '),flush=True)
+   if not retryable(e):raise
+ raise last
+
+def gallery_files(url,folder,cookies=None):
  folder.mkdir(parents=True,exist_ok=True)
- cmd=['gallery-dl','--config-ignore','--no-input','--no-mtime','--http-timeout','12','-R','1','--range','1-35','--filesize-max','20M','--filter',"extension in ('jpg','jpeg','png','webp','mp4','webm')",'-D',str(folder),url]
- p=run_limited(cmd,85)
- files=[f for f in folder.rglob('*') if f.is_file() and f.suffix.lower() in ('.jpg','.jpeg','.png','.webp','.mp4','.webm') and f.stat().st_size<=20*1024*1024]
+ cmd=['gallery-dl','--config-ignore','--no-input','--no-mtime','--http-timeout','12','-R','1','--range','1-35','--filesize-max','20M','--filter',"extension in ('jpg','jpeg','png','webp','mp4','webm')",'-D',str(folder)]
+ if cookies:cmd+=['--cookies',cookies]
+ p=run_limited(cmd+[url],85)
+ files=[f for f in folder.rglob('*') if f.is_file() and f.suffix.lower() in PHOTO_EXT+VIDEO_EXT and f.stat().st_size<=20*1024*1024]
  files=sorted(files,key=lambda f:str(f))
  if not files:raise RuntimeError('gallery-dl: '+(p.stderr or p.stdout)[-650:])
  return files
 
+# ---------- photos: panel + on-demand actions ----------
+def photo_panel(job):
+ j=job['id'];n=len(job['photos'])
+ if n==1:
+  kb=[[{'text':'📥 تحميل الصورة','callback_data':'a:'+j+':photos:all'}]]
+ else:
+  kb=[[{'text':'📥 كل الصور ('+str(n)+')','callback_data':'a:'+j+':photos:all'}],
+      [{'text':'🔢 صورة معينة','callback_data':'a:'+j+':photos:pick'},{'text':'📦 ملف ZIP','callback_data':'a:'+j+':photos:zip'}]]
+ talk(job['chat'],'🖼 تم العثور على '+str(n)+' صورة.\nاختار طريقة التحميل:',{'inline_keyboard':kb})
 
+def photo_picker(job):
+ j=job['id'];n=len(job['photos']);rows=[];row=[]
+ for i in range(1,n+1):
+  row.append({'text':str(i),'callback_data':'a:'+j+':photo:'+str(i)})
+  if len(row)==5:rows.append(row);row=[]
+ if row:rows.append(row)
+ talk(job['chat'],'🔢 اختار رقم الصورة (من 1 إلى '+str(n)+'):',{'inline_keyboard':rows})
+
+def photo_zip(job):
+ archive=DATA/job['id']/'photos.zip'
+ archive.parent.mkdir(parents=True,exist_ok=True)
+ if not archive.exists():
+  with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as z:
+   for i,f in enumerate(job['photos']):z.write(f,arcname=str(i+1).zfill(2)+Path(f).suffix.lower())
+ return archive
+
+def photo_action(j,mode,quality):
+ job=jobs.get(j)
+ if not job or not job.get('photos'):return
+ try:
+  files=[Path(f) for f in job['photos']]
+  if mode=='photos' and quality=='all':
+   talk(job['chat'],'⏳ جاري إرسال الصور…');send_album(job,files)
+  elif mode=='photos' and quality=='pick':photo_picker(job)
+  elif mode=='photos' and quality=='zip':
+   talk(job['chat'],'⏳ جاري تجهيز ملف ZIP…');prepare_file(job,photo_zip(job))
+  elif mode=='photo':send_single(job,files[int(quality)-1])
+ except Exception as e:
+  print('photo action failure',type(e).__name__,str(e)[:150],flush=True)
+  talk(job['chat'],'❌ تعذر إرسال الصور. جرّب مرة أخرى.')
+
+def present_media(job,files):
+ images=[f for f in files if f.suffix.lower() in PHOTO_EXT]
+ videos=[f for f in files if f.suffix.lower() in VIDEO_EXT]
+ if images:
+  job.update(state='ready',kind='photos',photos=[str(f) for f in images][:30])
+  photo_panel(job)
+  for v in videos[:3]:
+   try:upload(v,job)
+   except Exception as e:print('mixed video upload failed',type(e).__name__,flush=True)
+  return
+ if videos:
+  talk(job['chat'],'🎬 تم استخراج الفيديو. جاري إرساله…')
+  prepare_file(job,max(videos,key=lambda f:f.stat().st_size));return
+ raise RuntimeError('no usable media')
+
+def deliver_gallery(job,url):
+ cookies=ig_cookie_file() if site(url)=='instagram' else None
+ present_media(job,gallery_files(url,DATA/job['id']/'gallery',cookies))
+
+# ---------- instagram ----------
 def instagram_graphql(job):
- """Read publicly accessible media metadata without Instagram account cookies."""
- match=re.search(r'/(?:reels?|p|tv)/([A-Za-z0-9_-]+)',urlsplit(job['url']).path)
+ """Read publicly accessible media metadata without Instagram account cookies (fragile, kept as a late fallback)."""
+ match=IG_RE.search(urlsplit(job['url']).path)
  if not match:raise RuntimeError('unsupported Instagram URL')
- code=match.group(1)
+ code=match.group(2)
  headers={
   'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-  'X-IG-App-ID':'936619743392459',
-  'Referer':'https://www.instagram.com/',
- }
+  'X-IG-App-ID':'936619743392459','Referer':'https://www.instagram.com/'}
  doc=os.getenv('IG_GRAPHQL_DOC_ID','27128499623469141')
  with httpx.Client(headers=headers,follow_redirects=False,timeout=httpx.Timeout(14,connect=7)) as client:
-  homepage=client.get('https://www.instagram.com/')
+  client.get('https://www.instagram.com/')
   csrf=client.cookies.get('csrftoken','')
   if csrf:headers['X-CSRFToken']=csrf
   variables={'shortcode':code,'__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider':False}
-  response=client.post('https://www.instagram.com/graphql/query',headers=headers,
-     data={'doc_id':doc,'variables':json.dumps(variables,separators=(',',':'))})
+  response=client.post('https://www.instagram.com/graphql/query',headers=headers,data={'doc_id':doc,'variables':json.dumps(variables,separators=(',',':'))})
   if response.status_code!=200:raise RuntimeError('Instagram GraphQL HTTP '+str(response.status_code))
   try:body=response.json()
   except Exception:raise RuntimeError('Instagram GraphQL non-JSON response')
-  info=body.get('data') or {}
-  group=(info.get('xdt_api__v1__media__shortcode__web_info') or {}).get('items') or []
+  group=((body.get('data') or {}).get('xdt_api__v1__media__shortcode__web_info') or {}).get('items') or []
   if not group:raise RuntimeError('Instagram public GraphQL returned no media')
-  item=group[0]
-  elements=item.get('carousel_media') or [item]
-  medias=[]
-  for element in elements[:20]:
+  item=group[0];medias=[]
+  for element in (item.get('carousel_media') or [item])[:20]:
    versions=element.get('video_versions') or []
    if versions and versions[0].get('url'):medias.append(('video',versions[0]['url']))
    else:
     images=(element.get('image_versions2') or {}).get('candidates') or []
     if images and images[0].get('url'):medias.append(('image',images[0]['url']))
   if not medias:raise RuntimeError('Instagram public GraphQL returned no downloadable formats')
-  folder=DATA/job['id']/'instagram';folder.mkdir(parents=True,exist_ok=True)
-  paths=[]
+  folder=DATA/job['id']/'instagram';folder.mkdir(parents=True,exist_ok=True);paths=[]
+  def trusted(h):return h.endswith('.fbcdn.net') or h.endswith('.cdninstagram.com') or h in ('fbcdn.net','cdninstagram.com')
   with httpx.Client(timeout=httpx.Timeout(35,connect=8),follow_redirects=True,headers={'User-Agent':headers['User-Agent']}) as media_client:
    for i,(kind,source) in enumerate(medias):
-    domain=(urlsplit(source).hostname or '').lower()
-    if urlsplit(source).scheme!='https' or not (domain.endswith('.fbcdn.net') or domain.endswith('.cdninstagram.com') or domain in ('fbcdn.net','cdninstagram.com')):
-     raise RuntimeError('untrusted Instagram media host')
-    suffix='.mp4' if kind=='video' else '.jpg'
-    target=folder/(str(i+1).zfill(2)+suffix)
+    if urlsplit(source).scheme!='https' or not trusted((urlsplit(source).hostname or '').lower()):raise RuntimeError('untrusted Instagram media host')
+    target=folder/(str(i+1).zfill(2)+('.mp4' if kind=='video' else '.jpg'))
     with media_client.stream('GET',source) as stream:
      stream.raise_for_status()
-     final=(urlsplit(str(stream.url)).hostname or '').lower()
-     if not (final.endswith('.fbcdn.net') or final.endswith('.cdninstagram.com') or final in ('fbcdn.net','cdninstagram.com')):
-      raise RuntimeError('untrusted Instagram media redirect')
+     if not trusted((urlsplit(str(stream.url)).hostname or '').lower()):raise RuntimeError('untrusted Instagram media redirect')
      size=0
      with open(target,'wb') as fd:
       for chunk in stream.iter_bytes(chunk_size=131072):
@@ -127,34 +286,40 @@ def instagram_graphql(job):
        if size>90*1024*1024:raise RuntimeError('Instagram media too large')
        fd.write(chunk)
     paths.append(target)
-  if len(paths)==1 and paths[0].suffix=='.mp4':
-   talk(job['chat'],'🎬 تم استخراج ريل Instagram العام. جاري إرسال الفيديو…')
-   prepare_file(job,paths[0]);return
-  images=[f for f in paths if f.suffix=='.jpg']
-  if images:
-   talk(job['chat'],'🖼 تم استخراج '+str(len(images))+' صورة من Instagram.')
-   if len(images)>1:
-    archive=DATA[job['id']]/'instagram-photos.zip'
-    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as z:
-     for f in images:z.write(f,arcname=f.name)
-    try:send_album(job,images)
-    except Exception as e:print('instagram album error',type(e).__name__,flush=True)
-    prepare_file(job,archive)
-   else:prepare_file(job,images[0])
-   return
-  prepare_file(job,paths[0])
+ present_media(job,paths)
+
+def instagram_flow(job):
+ """yt-dlp first (measured to work for public reels/posts from Render), then the older routes. Returns info for a single video or None when already delivered."""
+ cookies=ig_cookie_file();errors=[]
+ try:
+  info=probe(job['url'],cookies=cookies)
+  if isinstance(info,dict) and info.get('_type') not in ('playlist','multi_video'):return info
+  errors.append('multi-item post')
+ except Exception as e:errors.append(str(e)[:300])
+ print('instagram yt-dlp route failed',errors[-1][:160].replace('\n',' '),flush=True)
+ for name,fn in (('graphql',instagram_graphql),('gallery',lambda jb:deliver_gallery(jb,jb['url']))):
+  try:fn(job);return None
+  except Exception as e:
+   errors.append(name+': '+str(e)[:200]);print('instagram',name,'route failed',str(e)[:140].replace('\n',' '),flush=True)
+ raise RuntimeError('instagram routes failed: '+' | '.join(errors)[:700])
+
+# ---------- delivery ----------
+def send_single(job,f):
+ f=Path(f);big=f.stat().st_size>9*1024*1024
+ typ,key=('sendDocument','document') if big else ('sendPhoto','photo')
+ with open(f,'rb') as fh:
+  with httpx.Client(timeout=httpx.Timeout(120,connect=20)) as c:
+   c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/'+typ,data={'chat_id':str(job['chat'])},files={key:(f.name,fh,'image/png' if f.suffix.lower()=='.png' else 'image/jpeg')}).raise_for_status()
 
 def send_album(job,images):
- # Telegram accepts 2-10 photos in one media group.
- if not images:return
- for offset in range(0,min(len(images),30),10):
-  batch=images[offset:offset+10]
-  if len(batch)==1:
-   with open(batch[0],'rb') as fh:
-    with httpx.Client(timeout=httpx.Timeout(120,connect=20)) as c:
-     rr=c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendPhoto',data={'chat_id':str(job['chat'])},files={'photo':(batch[0].name,fh,'image/jpeg')})
-     rr.raise_for_status()
-   continue
+ # Telegram accepts 2-10 photos per media group; oversized pictures go one by one as documents.
+ images=[Path(f) for f in images][:30]
+ small=[f for f in images if f.stat().st_size<=9*1024*1024]
+ for f in images:
+  if f not in small:send_single(job,f)
+ for offset in range(0,len(small),10):
+  batch=small[offset:offset+10]
+  if len(batch)==1:send_single(job,batch[0]);continue
   with ExitStack() as stack:
    media=[];uploads={}
    for i,f in enumerate(batch):
@@ -162,49 +327,40 @@ def send_album(job,images):
     uploads[part]=(f.name,stack.enter_context(open(f,'rb')),'image/png' if f.suffix.lower()=='.png' else 'image/jpeg')
     media.append({'type':'photo','media':'attach://'+part})
    with httpx.Client(timeout=httpx.Timeout(150,connect=20)) as c:
-    rr=c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendMediaGroup',data={'chat_id':str(job['chat']),'media':json.dumps(media)},files=uploads)
-    rr.raise_for_status()
+    c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendMediaGroup',data={'chat_id':str(job['chat']),'media':json.dumps(media)},files=uploads).raise_for_status()
+
+def upload(file,job):
+ file=Path(file);big=file.stat().st_size>9*1024*1024
+ typ={'.mp3':'sendAudio','.gif':'sendAnimation','.webm':'sendDocument','.zip':'sendDocument'}.get(file.suffix)
+ if typ is None and file.suffix.lower() in PHOTO_EXT:typ='sendDocument' if big else 'sendPhoto'
+ typ=typ or 'sendVideo'
+ key={'sendAudio':'audio','sendAnimation':'animation','sendDocument':'document','sendPhoto':'photo'}.get(typ,'video')
+ with open(file,'rb') as f:
+  with httpx.Client(timeout=httpx.Timeout(180,connect=20)) as c:
+   c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/'+typ,data={'chat_id':str(job['chat'])},files={key:(file.name,f)}).raise_for_status()
 
 def prepare_file(job,f):
- exp=int(time.time())+3600
- # Store the completed media for a signed fallback link.
- job.update(state='complete',file=str(f),expires=exp)
+ f=Path(f);exp=int(time.time())+3600
+ # Store the completed media for a signed fallback link. Photo jobs stay 'ready' so their buttons keep working.
+ job.update(file=str(f),expires=exp)
+ if job.get('kind')!='photos':job['state']='complete'
  if f.stat().st_size<=45*1024*1024:
   try:
-   upload(f,job)
-   return
+   upload(f,job);return
   except Exception as e:print('telegram file upload failed',type(e).__name__,flush=True)
  talk(job['chat'],'🔗 الملف جاهز. رابط تحميل صالح لمدة ساعة:\n'+link(job['id'],exp))
 
-def deliver_gallery(job,url):
- folder=DATA/job['id']
- files=gallery_files(url,folder/'gallery')
- images=[f for f in files if f.suffix.lower() in ('.jpg','.jpeg','.png','.webp')]
- if images:
-  # Preserve each picture individually and offer all pictures as an archive.
-  talk(job['chat'],'🖼 تم استخراج '+str(len(images))+' صورة. جاري إرسال الصور ونسخة ZIP…')
-  archive=folder/'photos.zip'
-  with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as z:
-   for i,f in enumerate(images):z.write(f,arcname=str(i+1).zfill(2)+f.suffix.lower())
-  try:send_album(job,images)
-  except Exception as e:print('album upload failed',type(e).__name__,str(e)[:130],flush=True)
-  prepare_file(job,archive)
-  return
- videos=[f for f in files if f.suffix.lower() in ('.mp4','.webm')]
- if videos:
-  talk(job['chat'],'🎬 تم استخراج الفيديو عن طريق المسار البديل. جاري إرساله…')
-  prepare_file(job,max(videos,key=lambda f:f.stat().st_size))
-  return
- raise RuntimeError('gallery-dl found no usable media')
-
 def fail_reason(job,error):
- err=str(error).lower()
- p=site(job['url'])
+ err=str(error).lower();p=site(job['url'])
+ if 'too large' in err or 'larger than' in err:return '❌ الملف أكبر من الحد المسموح (120MB). جرّب جودة أقل.'
  if 'timeout' in err:return '❌ انتهت مهلة الفحص. المنصة لم تستجب في الوقت المحدد، جرّب الرابط لاحقًا.'
- if p=='youtube' and ('not a bot' in err or 'sign in' in err):
-  return '❌ YouTube يطلب تحققًا من عنوان سيرفر Render. الفيديو ليس بالضرورة خاصًا، والتجربة من سيرفر آخر قد تنجح.'
+ if p=='youtube':
+  if 'not a bot' in err or 'sign in' in err:return '❌ YouTube رفض الطلب (حماية ضد الروبوتات) حتى بعد تجربة المسارات البديلة. جرّب مرة ثانية بعد دقيقة.'
+  if '403' in err or 'forbidden' in err:return '❌ جوجل رفض تحميل الملف (403). جرّب مرة ثانية.'
+  if 'private' in err or 'unavailable' in err:return '❌ الفيديو خاص أو غير متاح.'
  if p=='instagram':
-  return '❌ Instagram لم يسمح باستخراج الوسائط من هذا السيرفر، حتى بعد تجربة المسار البديل. تأكد أن الريل عام.'
+  m='❌ تعذر استخراج هذا المنشور من Instagram. غالبًا المحتوى مقيّد أو يتطلب تسجيل دخول، أو منشور صور لا يدعمه المسار العام.'
+  return m+('\n(جُرّب أيضًا بحساب مسجّل.)' if ig_cookie_file() else '')
  if p=='tiktok' and ('photo/' in job['url'] or 'unsupported' in err):
   return '❌ تعذر استخراج صور TikTok من الرابط. جرّب الرابط الكامل المنشور علنًا بدل الرابط المختصر.'
  if 'private' in err or 'login' in err:return '❌ قد يكون المحتوى خاصًا أو يتطلب تسجيل دخول.'
@@ -214,33 +370,20 @@ def inspect(j):
  job=jobs[j];p=site(job['url'])
  try:
   job['id']=j
-  # Instagram reels sometimes expose public GraphQL media despite HTML login redirects.
-  if p=='instagram':
-   try:instagram_graphql(job);return
-   except Exception as e:print('instagram public graphql failed',type(e).__name__,str(e)[:180],flush=True)
-  # TikTok photo-mode is not a yt-dlp video. Handle it with gallery-dl.
+  # TikTok photo-mode is not a yt-dlp video. Handle it with gallery-dl and let the user choose what to download.
   if p=='tiktok' and '/photo/' in job['url']:
    deliver_gallery(job,job['url']);return
-  try:
-   info=probe(job['url'])
-  except Exception as e:
-   if p=='tiktok' and ('unsupported url' in str(e).lower() or '/photo/' in str(e)):
-    m=re.search(r'https://(?:www\.)?tiktok\.com/@[^/\s]+/photo/\d+',str(e))
-    photo_url=m.group(0) if m else job['url']
-    deliver_gallery(job,photo_url);return
-   if p=='instagram':
-    try:deliver_gallery(job,job['url']);return
-    except Exception as e2:raise RuntimeError('instagram gallery fallback: '+str(e2)[:300]) from e
-   if p=='youtube' and ('not a bot' in str(e).lower() or 'sign in' in str(e).lower()):
-    last=e
-    for client in ('tv,web_embedded','web_safari'):
-     try:
-      info=probe(job['url'],client)
-      job['youtube_client']=client
-      break
-     except Exception as ex:last=ex
-    else:raise last
-   else:raise
+  if p=='instagram':
+   info=instagram_flow(job)
+   if info is None:return
+  elif p=='youtube':info=youtube_probe(job)
+  else:
+   try:info=probe(job['url'])
+   except Exception as e:
+    if p=='tiktok' and ('unsupported url' in str(e).lower() or '/photo/' in str(e)):
+     m=re.search(r'https://(?:www\.)?tiktok\.com/@[^/\s]+/photo/\d+',str(e))
+     deliver_gallery(job,m.group(0) if m else job['url']);return
+    raise
   if not isinstance(info,dict) or info.get('_type') in ('playlist','multi_video'):raise ValueError('single video only')
   heights=sorted(set(int(f['height']) for f in info.get('formats',[]) if isinstance(f,dict) and f.get('vcodec') not in (None,'none') and isinstance(f.get('height'),(int,float)) and 144<=int(f['height'])<=2160))
   wanted=[v for v in (360,480,720,1080) if v in heights] or heights[-4:]
@@ -255,13 +398,22 @@ def inspect(j):
   job['state']='failed'; print('inspect failure',p,type(e).__name__,str(e)[:330],flush=True)
   talk(job['chat'],fail_reason(job,e))
 
-def upload(file,job):
- typ={'.mp3':'sendAudio','.gif':'sendAnimation','.webm':'sendDocument','.zip':'sendDocument'}.get(file.suffix,'sendVideo')
- key={'.mp3':'audio','.gif':'animation','.webm':'document','.zip':'document'}.get(file.suffix,'video')
- with open(file,'rb') as f:
-  with httpx.Client(timeout=httpx.Timeout(180,connect=20)) as c:
-   r=c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/'+typ,data={'chat_id':str(job['chat'])},files={key:(file.name,f)})
-   r.raise_for_status()
+def fetch_video(job,folder,selector):
+ p=site(job['url']);cookies=ig_cookie_file() if p=='instagram' else None
+ if p=='youtube':
+  first=job.get('yt');atts=([tuple(first)] if first else [])+[a for a in yt_attempts() if not first or a!=tuple(first)]
+  atts=atts[:3]
+ else:atts=[(None,None)]
+ last=None
+ for client,proxy in atts:
+  r=ytdlp(job['url'],['--max-filesize','120M','--merge-output-format','mp4','--format',selector,'-o',str(folder/'video.%(ext)s')],200,proxy,client,cookies)
+  if not r.returncode:return
+  last=RuntimeError((r.stderr or r.stdout)[-500:])
+  print('download attempt failed',p,client,bool(proxy),str(last)[:120].replace('\n',' '),flush=True)
+  if not retryable(last):break
+  for f in folder.glob('video.*'):f.unlink(missing_ok=True)
+ raise last
+
 def process(j):
  job=jobs[j];folder=DATA/j;folder.mkdir(exist_ok=True)
  try:
@@ -269,14 +421,9 @@ def process(j):
   limit=120*1024*1024
   quality=job.get('quality','best')
   selector='bv*+ba/b' if quality=='best' else 'bv*[height<='+str(int(quality))+']+ba/b[height<='+str(int(quality))+']/b'
-  def progress(d):
-   if d.get('downloaded_bytes',0)>limit:raise ValueError('too large')
-  cmd=['yt-dlp','--no-playlist','--no-warnings','--socket-timeout','15','--retries','1','--extractor-retries','1','--max-filesize','120M','--merge-output-format','mp4','--format',selector,'-o',str(folder/'video.%(ext)s')]
-  if job.get('youtube_client'):cmd+=['--extractor-args','youtube:player_client='+job['youtube_client']]
-  p=run_limited(cmd+[job['url']],200)
-  if p.returncode:raise RuntimeError((p.stderr or p.stdout)[-500:])
+  fetch_video(job,folder,selector)
   candidates=[p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.mp4','.webm','.mkv')]
-  if not candidates:raise ValueError('no media file')
+  if not candidates:raise ValueError('file too large or no media file')
   f=max(candidates,key=lambda p:p.stat().st_size)
   if f.stat().st_size>limit:raise ValueError('file too large')
   mode=job['mode']
@@ -297,22 +444,46 @@ def process(j):
    talk(job['chat'],'🔗 رابط تنزيل صالح لمدة ساعة:\n'+link(j,exp))
  except Exception as e:
   print('processing failure',type(e).__name__,str(e)[:200],flush=True);job['state']='failed';talk(job['chat'],fail_reason(job,e))
+
+# ---------- housekeeping ----------
+def janitor_pass(now=None):
+ now=now or time.time()
+ with lock:
+  for j,v in list(jobs.items()):
+   age=now-v['created']
+   if age>JOB_META_TTL:
+    shutil.rmtree(DATA/j,ignore_errors=True);del jobs[j]
+   elif age>JOB_FILES_TTL and not v.get('expired'):
+    shutil.rmtree(DATA/j,ignore_errors=True)
+    v['expired']=True
+    if v.get('state')!='failed':v['state']='expired'
+    for k in ('file','photos','thumbnail','qualities'):v.pop(k,None)
+
+def janitor():
+ while True:
+  time.sleep(600)
+  try:janitor_pass()
+  except Exception as e:print('janitor error',type(e).__name__,flush=True)
+
+# ---------- API ----------
 class NewJob(BaseModel):
  url:str;chat_id:int;user_id:int;update_id:int|None=None
 class Action(BaseModel):
  chat_id:int;user_id:int;mode:str;quality:str='best'
 @app.get('/')
-def health():return {'ok':True,'worker':'BMediaHub','free_tools':['download','audio','gif','compress','webm']}
+@app.head('/')
+def health():return {'ok':True,'worker':'BMediaHub','warp':WARP['up'],'free_tools':['download','audio','gif','compress','webm','photos']}
 @app.post('/jobs')
 def create(p:NewJob,x_worker_secret:str|None=Header(None)):
  auth(x_worker_secret)
  if not check_url(p.url) or p.chat_id!=p.user_id or p.chat_id<=0:raise HTTPException(422,'invalid input')
+ url=normalize(p.url)
  with lock:
   for k,v in jobs.items():
    if p.update_id is not None and v.get('update_id')==p.update_id:return {'id':k,'created':False}
   count=sum(v['user']==p.user_id and v['state']!='failed' and v['created']>time.time()-86400 for v in jobs.values())
-  if count>=10:raise HTTPException(429,'daily limit')
-  j=uuid.uuid4().hex[:16];jobs[j]=dict(url=p.url,chat=p.chat_id,user=p.user_id,update_id=p.update_id,created=time.time(),state='preparing')
+  if count>=DAILY_LIMIT:raise HTTPException(429,'daily limit')
+  j=uuid.uuid4().hex[:16];jobs[j]=dict(url=url,chat=p.chat_id,user=p.user_id,update_id=p.update_id,created=time.time(),state='preparing')
  pool.submit(inspect,j);return {'id':j,'created':True}
 @app.post('/jobs/{j}/action')
 def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
@@ -321,6 +492,15 @@ def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
   job=jobs.get(j)
   if not job:raise HTTPException(404,'missing')
   if job['user']!=p.user_id or job['chat']!=p.chat_id:raise HTTPException(403,'wrong user')
+  if p.mode in ('photos','photo'):
+   if job.get('kind')!='photos':raise HTTPException(409,'not a photo job')
+   if job.get('expired') or not job.get('photos'):raise HTTPException(410,'expired')
+   n=len(job['photos'])
+   if p.mode=='photos' and p.quality not in ('all','pick','zip'):raise HTTPException(422,'invalid option')
+   if p.mode=='photo' and not (p.quality.isdigit() and 1<=int(p.quality)<=n):raise HTTPException(422,'invalid option')
+   pool.submit(photo_action,j,p.mode,p.quality);return {'ok':True}
+  if job.get('expired'):raise HTTPException(410,'expired')
+  if job.get('kind')=='photos':raise HTTPException(409,'photo job')
   if p.mode=='cover':
    if not job.get('thumbnail'):raise HTTPException(422,'no cover')
    pool.submit(send,'sendPhoto',chat_id=p.chat_id,photo=job['thumbnail']);return {'ok':True}
@@ -330,7 +510,7 @@ def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
  pool.submit(process,j);return {'ok':True}
 @app.post('/stats')
 def stats(x_worker_secret:str|None=Header(None)):
- auth(x_worker_secret);return {'users':len(set(v['user'] for v in jobs.values())),'total_jobs':len(jobs),'completed':sum(v['state']=='complete' for v in jobs.values()),'failed':sum(v['state']=='failed' for v in jobs.values()),'today':sum(v['created']>time.time()-86400 for v in jobs.values())}
+ auth(x_worker_secret);return {'users':len(set(v['user'] for v in jobs.values())),'total_jobs':len(jobs),'completed':sum(v['state']=='complete' for v in jobs.values()),'failed':sum(v['state']=='failed' for v in jobs.values()),'today':sum(v['created']>time.time()-86400 for v in jobs.values()),'warp':WARP['up']}
 @app.get('/download/{j}')
 def download(j:str,until:int=0,sig:str=''):
  job=jobs.get(j);now=int(time.time())
@@ -340,3 +520,8 @@ def download(j:str,until:int=0,sig:str=''):
  return FileResponse(file,filename='mediahub'+file.suffix,headers={'Cache-Control':'private, no-store','X-Robots-Tag':'noindex'})
 def sig_for(j,until):return sig_fn(j,until)
 def sig_fn(j,until):return sig(j,until)
+
+if os.getenv('BMH_NO_BG')!='1':
+ load_ig_cookies()
+ threading.Thread(target=warp_supervisor,daemon=True).start()
+ threading.Thread(target=janitor,daemon=True).start()
