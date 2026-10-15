@@ -28,7 +28,10 @@ def send(method,**kw):
   print('telegram api failed',r.status_code,detail[:180],flush=True)
   r.raise_for_status()
 def talk(id,txt,kb=None):
- try:send('sendMessage',chat_id=id,text=txt[:4096],reply_markup=kb,disable_web_page_preview=True)
+ try:
+  kw=dict(chat_id=id,text=txt[:4096],disable_web_page_preview=True)
+  if kb is not None:kw['reply_markup']=kb
+  send('sendMessage',**kw)
  except Exception as e:print('telegram message error',type(e).__name__,flush=True)
 def sig(j,exp):
  key=os.environ['DOWNLOAD_SIGNING_SECRET']
