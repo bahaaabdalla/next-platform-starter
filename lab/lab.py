@@ -73,8 +73,8 @@ def download(tag, route, url, proxy=None, extra=None):
     d = '/tmp/lab_dl'
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
-    cmd = ['yt-dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--retries', '1', '--max-filesize', '15M',
-           '-f', 'worst[ext=mp4]/worst/best', '-o', d + '/%(id)s.%(ext)s']
+    cmd = ['yt-dlp', '--no-playlist', '--no-warnings', '--socket-timeout', '15', '--retries', '1', '--max-filesize', '40M',
+           '-f', 'bv*+ba/b', '-S', '+size,+br', '--merge-output-format', 'mp4', '-o', d + '/%(id)s.%(ext)s']
     if proxy:
         cmd += ['--proxy', proxy]
     if extra:
@@ -157,6 +157,13 @@ def main():
     rec('ENV', 'direct-egress', egress())
     rec('ENV', 'ig-urls', len(IG))
     warp = start_warp()
+    if os.getenv('LAB_MODE') == 'ytdl' and warp:
+        for client in CLIENTS:
+            ex = ['--extractor-args', 'youtube:player_client=' + client] if client else None
+            download('youtube-' + (client or 'default'), 'warp', YT['watch'], SOCKS, ex)
+        download('youtube-shorts', 'warp', YT['shorts'], SOCKS)
+        rec('DONE', time.strftime('%H:%M:%S'))
+        return
     routes = [('warp', SOCKS)] if warp else []
     routes.append(('direct', None))
     for route, proxy in routes:
