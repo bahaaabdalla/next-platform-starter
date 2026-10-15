@@ -148,7 +148,7 @@ def inspect(j):
    info=probe(job['url'])
   except Exception as e:
    if p=='tiktok' and ('unsupported url' in str(e).lower() or '/photo/' in str(e)):
-    m=re.search(r'https://(?:www\\.)?tiktok\\.com/@[^/\\s]+/photo/\\d+',str(e))
+    m=re.search(r'https://(?:www\.)?tiktok\.com/@[^/\s]+/photo/\d+',str(e))
     photo_url=m.group(0) if m else job['url']
     deliver_gallery(job,photo_url);return
    if p=='instagram':
