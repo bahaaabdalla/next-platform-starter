@@ -21,10 +21,14 @@ def auth(v):
  if not k or not v or not hmac.compare_digest(k,v):raise HTTPException(403,'Unauthorized')
 def send(method,**kw):
  t=os.environ['TG_BOT_TOKEN']
- r=httpx.post('https://api.telegram.org/bot'+t+'/'+method,json=kw,timeout=30);r.raise_for_status()
+ r=httpx.post('https://api.telegram.org/bot'+t+'/'+method,json=kw,timeout=30);if r.status_code>=400:
+  try: detail=r.json().get('description','unknown')
+  except: detail='unknown'
+  print('telegram api failed',r.status_code,detail[:180],flush=True)
+  r.raise_for_status()
 def talk(id,txt,kb=None):
  try:send('sendMessage',chat_id=id,text=txt[:4096],reply_markup=kb,disable_web_page_preview=True)
- except Exception as e:print('telegram message error',str(e)[:90])
+ except Exception as e:print('telegram message error',type(e).__name__,flush=True)
 def sig(j,exp):
  key=os.environ['DOWNLOAD_SIGNING_SECRET']
  return hmac.new(key.encode(),(j+':'+str(exp)).encode(),hashlib.sha256).hexdigest()
@@ -46,7 +50,7 @@ def inspect(j):
   duration=int(job.get('duration') or 0)
   talk(job['chat'], '🎬 '+job['title']+'\n⏱ '+str(duration//60)+':'+str(duration%60).zfill(2)+'\nاختار الجودة والأداة:',{'inline_keyboard':buttons})
  except Exception as e:
-  job['state']='failed'; print('inspect failure',type(e).__name__,str(e)[:180]);talk(job['chat'],'❌ تعذر فحص الفيديو. قد يكون خاصًا أو محجوبًا.')
+  job['state']='failed'; print('inspect failure',type(e).__name__,str(e)[:180]);talk(job['chat'],'❌ تعذر فحص الفيديو. YouTube قد يطلب التحقق من أن السيرفر ليس بوتًا. جرّب رابطًا من منصة أخرى أو فيديو آخر.')
 def upload(file,job):
  typ={'.mp3':'sendAudio','.gif':'sendAnimation','.webm':'sendDocument'}.get(file.suffix,'sendVideo')
  key={'.mp3':'audio','.gif':'animation','.webm':'document'}.get(file.suffix,'video')
