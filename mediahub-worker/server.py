@@ -182,14 +182,52 @@ def gallery_files(url,folder,cookies=None):
  return files
 
 # ---------- photos: panel + on-demand actions ----------
+SHEET_TILE=280;SHEET_COLS=4;SHEET_MAX=12   # small compressed preview sheets: up to 12 numbered thumbnails each
+
+def contact_sheet(files,first,dest):
+ """One compressed JPEG with numbered thumbnails so the user can tell which image to pick."""
+ from PIL import Image,ImageDraw,ImageFont,ImageOps
+ T=SHEET_TILE;rows=(len(files)+SHEET_COLS-1)//SHEET_COLS
+ sheet=Image.new('RGB',(SHEET_COLS*T,rows*T),(22,22,22))
+ try:font=ImageFont.load_default(size=40)
+ except TypeError:font=ImageFont.load_default()
+ draw=ImageDraw.Draw(sheet)
+ for i,f in enumerate(files):
+  col,row=i%SHEET_COLS,i//SHEET_COLS;x,y=col*T,row*T
+  try:
+   with Image.open(f) as im:
+    im=ImageOps.exif_transpose(im).convert('RGB');im.thumbnail((T-8,T-8));sheet.paste(im,(x+(T-im.width)//2,y+(T-im.height)//2))
+  except Exception:pass
+  draw.rectangle((x+4,y+4,x+66,y+56),fill=(0,0,0));draw.text((x+12,y+6),str(first+i),fill=(255,255,255),font=font)
+ sheet.save(dest,'JPEG',quality=70,optimize=True)
+ return dest
+
+def tg_photo(job,path,caption,kb):
+ with open(path,'rb') as fh:
+  with httpx.Client(timeout=httpx.Timeout(60,connect=15)) as c:
+   c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendPhoto',data={'chat_id':str(job['chat']),'caption':caption,'reply_markup':json.dumps(kb)},files={'photo':('preview.jpg',fh,'image/jpeg')}).raise_for_status()
+
+def photo_previews(job):
+ """Preview sheets, each followed by its own number buttons (tap a number = download that image)."""
+ j=job['id'];files=job['photos'];folder=DATA/j;folder.mkdir(parents=True,exist_ok=True)
+ for start in range(0,len(files),SHEET_MAX):
+  chunk=files[start:start+SHEET_MAX];first=start+1
+  sheet=contact_sheet(chunk,first,folder/('preview%02d.jpg'%(start//SHEET_MAX+1)))
+  btns=[{'text':str(first+i),'callback_data':'a:'+j+':photo:'+str(first+i)} for i in range(len(chunk))]
+  kb={'inline_keyboard':[btns[k:k+6] for k in range(0,len(btns),6)]}
+  tg_photo(job,sheet,'👆 اضغط رقم الصورة اللي عايز تحمّلها ('+str(first)+'–'+str(first+len(chunk)-1)+')',kb)
+
 def photo_panel(job):
  j=job['id'];n=len(job['photos'])
  if n==1:
   kb=[[{'text':'📥 تحميل الصورة','callback_data':'a:'+j+':photos:all'}]]
- else:
-  kb=[[{'text':'📥 كل الصور ('+str(n)+')','callback_data':'a:'+j+':photos:all'}],
-      [{'text':'🔢 صورة معينة','callback_data':'a:'+j+':photos:pick'},{'text':'📦 ملف ZIP','callback_data':'a:'+j+':photos:zip'}]]
- talk(job['chat'],'🖼 تم العثور على '+str(n)+' صورة.\nاختار طريقة التحميل:',{'inline_keyboard':kb})
+  talk(job['chat'],'🖼 تم العثور على صورة واحدة.',{'inline_keyboard':kb});return
+ try:photo_previews(job)
+ except Exception as e:
+  print('preview failed',type(e).__name__,str(e)[:150],flush=True);photo_picker(job)
+ kb=[[{'text':'📥 كل الصور ('+str(n)+')','callback_data':'a:'+j+':photos:all'}],
+     [{'text':'📦 ملف ZIP','callback_data':'a:'+j+':photos:zip'}]]
+ talk(job['chat'],'🖼 '+str(n)+' صورة. اختار صورة من المعاينة فوق، أو حمّل الكل:',{'inline_keyboard':kb})
 
 def photo_picker(job):
  j=job['id'];n=len(job['photos']);rows=[];row=[]
@@ -214,7 +252,9 @@ def photo_action(j,mode,quality):
   files=[Path(f) for f in job['photos']]
   if mode=='photos' and quality=='all':
    talk(job['chat'],'⏳ جاري إرسال الصور…');send_album(job,files)
-  elif mode=='photos' and quality=='pick':photo_picker(job)
+  elif mode=='photos' and quality=='pick':
+   try:photo_previews(job)
+   except Exception:photo_picker(job)
   elif mode=='photos' and quality=='zip':
    talk(job['chat'],'⏳ جاري تجهيز ملف ZIP…');prepare_file(job,photo_zip(job))
   elif mode=='photo':send_single(job,files[int(quality)-1])
