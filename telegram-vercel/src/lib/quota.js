@@ -8,13 +8,24 @@ export const ADMINS=()=>(process.env.ADMIN_USER_IDS||"5375428860").split(",").ma
 export const isAdmin=id=>ADMINS().includes(String(id));
 
 export async function getCfg(){
-  const o=obj(await cmd("HGETALL",P+"cfg"));
-  return {main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5)};
+  return parseCfg(obj(await cmd("HGETALL",P+"cfg")));
+}
+const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5)});
+// Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
+export async function load(id){
+  const d=today();
+  const [cfgRaw,u,used,bonus]=await pipe([["HGETALL",P+"cfg"],["HGETALL",P+"u:"+id],["GET",P+"use:"+id+":"+d],["GET",P+"bonus:"+id+":"+d]]);
+  const c=parseCfg(obj(cfgRaw));
+  return {c,a:buildAccount(id,c,u,used,bonus)};
 }
 // Everything the gate needs about one user, in a single round trip.
 export async function account(id,c){
   const d=today();
   const [u,used,bonus]=await pipe([["HGETALL",P+"u:"+id],["GET",P+"use:"+id+":"+d],["GET",P+"bonus:"+id+":"+d]]);
+  return buildAccount(id,c,u,used,bonus);
+}
+function buildAccount(id,c,u,used,bonus){
+  const d=today();
   const user=obj(u),usedToday=num(used,0),bonusToday=num(bonus,0);
   const wel=num(user.wel,0);
   const perDay=num(user.lim,c.daily)*VIDEO;
@@ -29,16 +40,13 @@ export function describe(a){
   const dl=downloads(a.remaining),ph=a.remaining;
   return `🎟 رصيدك: ${dl} تحميل فيديو (أو ${ph} عملية صور)\n🎁 هدية البداية المتبقية: ${downloads(a.wel)} تحميل\n📅 النهاردة استهلكت: ${(a.usedToday/VIDEO).toFixed(1).replace(/\.0$/,"")} من ${(a.allow+a.bonusToday)/VIDEO} تحميل يومي`;
 }
-export async function register(id,from,c){
+// Accept terms (and register on first time: welcome gift + start date). Two round trips, idempotent.
+export async function acceptTerms(id,from,c){
   const name=[from?.first_name,from?.last_name].filter(Boolean).join(" ").slice(0,60);
   const ex=await cmd("HGET",P+"u:"+id,"reg");
-  if(ex)return false;
+  if(ex){await pipe([["HSET",P+"u:"+id,"terms","1"],["SADD",P+"users",String(id)]]);return false}
   await pipe([["HSET",P+"u:"+id,"reg",String(Date.now()),"cdate",today(),"wel",String(c.welcome*VIDEO),"terms","1","name",name,"uname",from?.username||""],["SADD",P+"users",String(id)]]);
   return true;
-}
-export async function acceptTerms(id,from,c){
-  if(await register(id,from,c))return;
-  await cmd("HSET",P+"u:"+id,"terms","1");await cmd("SADD",P+"users",String(id));
 }
 // Take credit: the welcome pool first, then today's allowance. Never blocks (balance may dip slightly negative).
 export async function spend(id,units){

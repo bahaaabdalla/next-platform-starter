@@ -1,13 +1,14 @@
 import {tg,send,sleep} from "../lib/tg.js";
 import {redisOn,cmd,pipe} from "../lib/redis.js";
-import {P,isAdmin,ADMINS,getCfg,account,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey} from "../lib/quota.js";
+import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey} from "../lib/quota.js";
 import {adminCommand,adminCallback} from "../lib/admin.js";
-import {TERMS,HOWTO} from "../lib/texts.js";
+import {TERMS,HOWTO,ONBOARD_HEAD} from "../lib/texts.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
 const WH=process.env.TG_PUBLIC_WEBHOOK_URL||"https://bmediahub-telegram.vercel.app/api/webhook";
-const menu={inline_keyboard:[[{text:"📥 Video",callback_data:"tool:video"},{text:"🎵 MP3",callback_data:"tool:audio"}],[{text:"🖼 Cover",callback_data:"tool:cover"},{text:"📦 Compress",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 Photos",callback_data:"tool:photos"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ Status",callback_data:"tool:status"}]]};
+const menu={inline_keyboard:[[{text:"📥 فيديو",callback_data:"tool:video"},{text:"🎵 صوت MP3",callback_data:"tool:audio"}],[{text:"🖼 الغلاف",callback_data:"tool:cover"},{text:"📦 ضغط",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 صور",callback_data:"tool:photos"},{text:"📝 الوصف",callback_data:"tool:caption"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ الحالة",callback_data:"tool:status"}]]};
+const TOOL_AR={video:"📥 تحميل فيديو",audio:"🎵 تحويل لصوت MP3",cover:"🖼 غلاف الفيديو",compress:"📦 ضغط الفيديو",gif:"🎞 تحويل GIF",webm:"🔁 تحويل WebM"};
 const MODES=["chat","link","cover","audio","gif","compress","webm","photos","photo","caption"],FREE_MODES=["cover","caption"];
 function ret(res,x,s=200){res.writeHead(s,{"content-type":"application/json;charset=utf-8","cache-control":"no-store"});return res.end(JSON.stringify(x))}
 function getPlatform(s){try{const u=new URL(s);if(u.protocol!=="https:")return "";const h=u.hostname.replace(/^www\./,"").toLowerCase();if(h==="youtu.be"||h==="youtube.com"||h.endsWith(".youtube.com"))return "YouTube";if(h==="tiktok.com"||h.endsWith(".tiktok.com"))return "TikTok";if(h==="instagram.com"||h.endsWith(".instagram.com"))return "Instagram";if(h==="facebook.com"||h.endsWith(".facebook.com")||h==="fb.watch")return "Facebook";}catch{}return ""}
@@ -16,7 +17,6 @@ async function ping(ms){try{const r=await fetch(WORKER.replace(/\/$/,"")+"/",{si
 async function wake(id){if(await ping(3000))return true;await send(id,"⏳ جاري تنشيط الخادم... ممكن ياخد حوالي دقيقة، وهكمل تلقائيًا أول ما يصحى.");const end=Date.now()+40000;while(Date.now()<end){if(await ping(5000))return true;await sleep(1500)}return false}
 
 // ---------- gate: ban / maintenance / terms / mandatory channel / credit ----------
-const termsKb={inline_keyboard:[[{text:"✅ أوافق على الشروط",callback_data:"terms:ok"}]]};
 async function remember(user,url){if(url)try{await cmd("SET",P+"pend:"+user,url,"EX","3600")}catch{}}
 async function exhausted(user,c,a,pending){
   await remember(user,pending);
@@ -27,14 +27,23 @@ async function exhausted(user,c,a,pending){
   else if(a.bonusToday>0)t+="\n\n🎁 مكافأة النهاردة اتفعّلت بالفعل. نشوفك بكرة!";
   return {text:t,kb:rows.length?{inline_keyboard:rows}:undefined};
 }
+// One screen for onboarding: terms (+ disclaimer) and the mandatory channel, finished by a single button.
+function onboard(c,needTerms){
+  const rows=[];if(c.main)rows.push([{text:"📣 اشترك في القناة",url:chanLink(c.main)}]);
+  rows.push([{text:needTerms?(c.main?"✅ اشتركت وأوافق على الشروط":"✅ أوافق على الشروط"):"✅ اشتركت، تحقق",callback_data:"go"}]);
+  const text=needTerms
+    ?ONBOARD_HEAD+TERMS+(c.main?"\n\n👇 خطوتين بس: اشترك في "+c.main+"، وبعدها دوس «اشتركت وأوافق على الشروط».":"")
+    :"📣 عشان تكمل لازم تشترك في قناتنا:\n"+c.main+"\nوبعدها دوس «اشتركت، تحقق».";
+  return {text,kb:{inline_keyboard:rows}};
+}
 async function gate(user,{credit=false,pending=null}={}){
   if(!redisOn()||isAdmin(user))return null;
   try{
-    const c=await getCfg(),a=await account(user,c);
+    const {c,a}=await load(user);
     if(a.banned)return {text:"⛔ تم إيقاف حسابك من استخدام البوت."};
     if(c.maint)return {text:"🛠 البوت في صيانة دلوقتي. جرّب بعد شوية."};
-    if(!a.terms){await remember(user,pending);return {text:TERMS,kb:termsKb}}
-    if(c.main&&(await member(c.main,user))===false){await remember(user,pending);return {text:"📣 عشان تستخدم البوت لازم تشترك في قناتنا الأول:\n"+c.main+"\nبعد ما تشترك دوس «تحقق».",kb:{inline_keyboard:[[{text:"📣 اشترك في القناة",url:chanLink(c.main)}],[{text:"✅ اشتركت، تحقق",callback_data:"chk"}]]}}}
+    if(!a.terms){await remember(user,pending);return onboard(c,true)}
+    if(c.main&&(await member(c.main,user))===false){await remember(user,pending);return onboard(c,false)}
     if(credit&&!a.unlimited&&a.remaining<=0)return await exhausted(user,c,a,pending);
     return null;
   }catch(e){console.error("gate",e.message);return null}   // fail-open: never lock users out because Redis is down
@@ -53,7 +62,7 @@ async function resume(id,user){
   if(!redisOn())return;
   try{const url=await cmd("GETDEL",P+"pend:"+user);if(url)await proceed(id,user,url,null)}catch(e){console.error("resume",e.message)}
 }
-const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n/help شرح النظام · /me رصيدك";
+const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me";
 
 async function message(m,u){
   if(!m||m.chat?.type!=="private")return;
@@ -83,30 +92,42 @@ async function message(m,u){
   return proceed(id,user,url,u.update_id);
 }
 
+// Answer the callback right away (stops the button spinner) while the real work runs in parallel.
 async function callback(q){
-  await tg("answerCallbackQuery",{callback_query_id:q.id}).catch(()=>{});
+  const d=String(q.data||""),needsToast=(d==="go"||d==="terms:ok"||d==="chk"||d==="bonus");
+  let acked=false;
+  const ack=(text,alert=false)=>{if(acked)return Promise.resolve();acked=true;return tg("answerCallbackQuery",{callback_query_id:q.id,...(text?{text:String(text).slice(0,190),show_alert:alert}:{})}).catch(()=>{})};
+  const early=needsToast?null:ack();
+  try{await callbackWork(q,d,ack)}finally{await early;await ack()}
+}
+async function callbackWork(q,d,ack){
   const id=q.message?.chat?.id,user=q.from?.id;if(!id||!user)return;if(!allowed(user))return;
-  const d=String(q.data||"");
   if(d.startsWith("adm:")){if(isAdmin(user)&&redisOn())return adminCallback(d,id);return}
-  if(d==="terms:ok"){
-    if(!redisOn())return;const c=await getCfg();
-    const ex=(await account(user,c)).terms;await acceptTerms(user,q.from,c);
-    if(!ex)await send(id,welcome(c),menu);
-    const g=await gate(user);if(g)return deny(id,g);
+  if(d==="go"||d==="terms:ok"||d==="chk"){
+    if(!redisOn())return;
+    // ignore rapid repeated taps (each tap used to produce another message)
+    if((await cmd("SET",P+"lock:go:"+user,"1","NX","EX","8"))!=="OK")return;
+    const {c,a}=await load(user);
+    if(a.banned)return ack("⛔ تم إيقاف حسابك.",true);
+    const mem=c.main&&!isAdmin(user)?await member(c.main,user):true;
+    if(mem===false){await cmd("DEL",P+"lock:go:"+user);return ack("⚠️ لسه مش مشترك في القناة. اشترك الأول وبعدين دوس الزرار تاني.",true)}
+    if(!a.terms)await acceptTerms(user,q.from,c);
+    const text=a.terms?"✅ تم التحقق. ابعت الرابط وأنا أكمل.\n\n"+welcome(c):welcome(c);
+    try{await tg("editMessageText",{chat_id:id,message_id:q.message.message_id,text,disable_web_page_preview:true,reply_markup:menu})}
+    catch{await send(id,text,menu)}
     return resume(id,user);
   }
-  if(d==="chk"){const g=await gate(user);if(g)return deny(id,g);await send(id,"✅ تم التحقق. ابعت الرابط.");return resume(id,user)}
   if(d==="bonus"){
     if(!redisOn())return;const g0=await gate(user);if(g0)return deny(id,g0);
     const c=await getCfg(),r=await claimBonus(user,c);
     if(r.ok){await send(id,"🎉 تم تفعيل +"+r.units+" تحميلات لباقي النهاردة (اشتراكك في "+r.channel+").");return resume(id,user)}
     if(r.reason==="today")return send(id,"🎁 المكافأة اتفعّلت النهاردة بالفعل. نشوفك بكرة!");
     if(r.reason==="none")return send(id,"مفيش قنوات إضافية متاحة ليك دلوقتي. الحصة بتتجدد بكرة.");
-    return send(id,"مش لاقيك مشترك في أي قناة جديدة. اشترك في واحدة من القنوات اللي فوق وبعدين دوس الزرار تاني.");
+    return ack("مش لاقيك مشترك في أي قناة جديدة. اشترك في واحدة من القنوات اللي فوق وبعدين دوس الزرار تاني.",true);
   }
   if(d==="tool:wake"){if(!WORKER||!WKEY)return send(id,"⚠️ خادم المعالجة غير مربوط.");return send(id,(await wake(id))?"✅ الخادم صاحي وجاهز. ابعت الرابط.":"⌛ الخادم لسه بيصحى، اضغط تنشيط تاني بعد دقيقة.")}
-  if(d==="tool:status")return send(id,"🟢 البوت متصل، Media Worker: "+(WORKER&&WKEY?"configured":"not connected"));
-  if(d.startsWith("tool:")){const t=d.slice(5);return send(id,t==="photos"?"🖼 ابعت رابط بوست صور (TikTok أو Instagram) وهتظهرلك أزرار: كل الصور / صورة معينة / ملف ZIP.":"🛠 "+t+"\nابعت رابط فيديو عام، وبعد الفحص هتلاقي الزرار ده في لوحة الأدوات.")}
+  if(d==="tool:status")return send(id,"🟢 البوت شغال.\n🎬 خادم التحميل: "+(WORKER&&WKEY?"مربوط":"غير مربوط"));
+  if(d.startsWith("tool:")){const t=d.slice(5);return send(id,t==="photos"?"🖼 ابعت رابط بوست صور (TikTok أو Instagram) وهتظهرلك معاينة بالأرقام وأزرار: كل الصور / صورة معينة / ملف ZIP.":t==="caption"?"📝 ابعت رابط فيديو، وبعد الفحص هتلاقي زرار «📝 الوصف / الكابشن» يرسللك نص المنشور كامل علشان تنسخه (من غير تكلفة).":"🛠 "+(TOOL_AR[t]||t)+"\nابعت رابط فيديو عام، وبعد الفحص هتلاقي الأداة دي في اللوحة اللي هتظهرلك.")}
   if(d.startsWith("a:")&&WORKER&&WKEY){
     const p=d.split(":");
     if(p.length===4&&/^[0-9a-f]{16}$/.test(p[1])&&MODES.includes(p[2])){
@@ -138,5 +159,5 @@ if(req.method==="GET"&&(p==="/"||p==="/index.html")){res.writeHead(200,{"content
 if(req.method==="GET"&&(p==="/api/health"||p==="/health"))return ret(res,{ok:true,telegramConfigured:!!(process.env.TG_BOT_TOKEN&&SECRET),workerConfigured:!!(WORKER&&WKEY),redisConfigured:redisOn(),platforms:["youtube","tiktok","instagram","facebook"]});
 if(req.method==="GET"&&(p==="/api/activate"||p==="/activate")){try{return ret(res,{ok:true,...await activate()})}catch(e){console.error("activate",e.message);return ret(res,{ok:false,error:"activation_failed"},502)}}
 if(req.method==="POST"&&(p==="/api/usage"||p==="/usage")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:true,skipped:"no_redis"});try{const b=typeof req.body==="string"?JSON.parse(req.body):(req.body||{});return ret(res,{ok:true,...await handleUsage(b)})}catch(e){console.error("usage",e.message);return ret(res,{ok:false},500)}}
-if(req.method==="POST"&&(p==="/api/webhook"||p==="/webhook")){if(!SECRET||req.headers["x-telegram-bot-api-secret-token"]!==SECRET)return ret(res,{ok:false},403);try{const u=typeof req.body==="string"?JSON.parse(req.body):req.body;if(u?.message)await message(u.message,u);if(u?.callback_query)await callback(u.callback_query);return ret(res,{ok:true})}catch(e){console.error("webhook",e.message);return ret(res,{ok:false},500)}}
+if(req.method==="POST"&&(p==="/api/webhook"||p==="/webhook")){if(!SECRET||req.headers["x-telegram-bot-api-secret-token"]!==SECRET)return ret(res,{ok:false},403);try{const t0=Date.now(),u=typeof req.body==="string"?JSON.parse(req.body):req.body;if(u?.message)await message(u.message,u);if(u?.callback_query)await callback(u.callback_query);console.log("upd",u?.callback_query?"cb:"+String(u.callback_query.data||"").slice(0,10):"msg",Date.now()-t0+"ms");return ret(res,{ok:true})}catch(e){console.error("webhook",e.message);return ret(res,{ok:false},500)}}
 return ret(res,{error:"not_found"},404)}
