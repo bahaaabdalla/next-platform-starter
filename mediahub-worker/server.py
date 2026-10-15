@@ -21,7 +21,8 @@ def auth(v):
  if not k or not v or not hmac.compare_digest(k,v):raise HTTPException(403,'Unauthorized')
 def send(method,**kw):
  t=os.environ['TG_BOT_TOKEN']
- r=httpx.post('https://api.telegram.org/bot'+t+'/'+method,json=kw,timeout=30);if r.status_code>=400:
+ r=httpx.post('https://api.telegram.org/bot'+t+'/'+method,json=kw,timeout=30)
+ if r.status_code>=400:
   try: detail=r.json().get('description','unknown')
   except: detail='unknown'
   print('telegram api failed',r.status_code,detail[:180],flush=True)
