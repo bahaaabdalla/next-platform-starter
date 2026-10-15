@@ -74,7 +74,7 @@ def gallery_files(url,folder):
 
 def instagram_graphql(job):
  """Read publicly accessible media metadata without Instagram account cookies."""
- match=re.search(r'/(?:reel|p|tv)/([A-Za-z0-9_-]+)',urlsplit(job['url']).path)
+ match=re.search(r'/(?:reels?|p|tv)/([A-Za-z0-9_-]+)',urlsplit(job['url']).path)
  if not match:raise RuntimeError('unsupported Instagram URL')
  code=match.group(1)
  headers={
