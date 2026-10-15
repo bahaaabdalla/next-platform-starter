@@ -1,0 +1,14 @@
+# Run the worker on any VPS:  docker compose -f mediahub-worker/docker-compose.yml up -d --build   (from the repo root)
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: mediahub-worker/Dockerfile
+    restart: unless-stopped
+    ports: ["10000:10000"]
+    environment:
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN}
+      MEDIA_WORKER_SECRET: ${MEDIA_WORKER_SECRET}
+      DOWNLOAD_SIGNING_SECRET: ${DOWNLOAD_SIGNING_SECRET}
+      WARP_ENABLED: ${WARP_ENABLED:-1}
+      USAGE_URL: ${USAGE_URL}

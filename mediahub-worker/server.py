@@ -13,7 +13,8 @@ DATA=Path(os.getenv('MEDIA_DATA_DIR','/tmp/bmediahub'));DATA.mkdir(parents=True,
 jobs={};lock=threading.Lock();pool=ThreadPoolExecutor(max_workers=2)
 hosts=('youtu.be','youtube.com','tiktok.com','instagram.com','facebook.com','fb.watch')
 PHOTO_EXT=('.jpg','.jpeg','.png','.webp');VIDEO_EXT=('.mp4','.webm')
-DAILY_LIMIT=int(os.getenv('DAILY_LIMIT','10'))
+DAILY_LIMIT=int(os.getenv('DAILY_LIMIT','100000'))   # per-user quotas are enforced by the Vercel front (Redis); this is only a safety net
+USAGE_URL=os.getenv('USAGE_URL','https://bmediahub-telegram-bahaaabdallas-projects.vercel.app/api/usage')
 JOB_FILES_TTL=2*3600   # downloaded files / photo buttons stay valid this long
 JOB_META_TTL=86400     # light job records are kept for the daily quota window
 IG_RE=re.compile(r'/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]+)')
@@ -115,6 +116,14 @@ def normalize(url):
 def auth(v):
  k=os.getenv('MEDIA_WORKER_SECRET','')
  if not k or not v or not hmac.compare_digest(k,v):raise HTTPException(403,'Unauthorized')
+def report(job,kind,nbytes):
+ """Tell the Vercel front what was delivered: credit is charged there (video once per job, photo per action) and outbound bytes are counted. Never blocks or fails a delivery."""
+ def run():
+  try:httpx.post(USAGE_URL,json={'user':job.get('user'),'job':job.get('id'),'kind':kind,'bytes':int(nbytes)},headers={'x-worker-secret':os.getenv('MEDIA_WORKER_SECRET','')},timeout=10)
+  except Exception as e:print('usage report failed',type(e).__name__,flush=True)
+ threading.Thread(target=run,daemon=True).start()
+def charge_kind(job):return 'photo' if job.get('kind')=='photos' else 'video'
+
 def send(method,**kw):
  t=os.environ['TG_BOT_TOKEN']
  r=httpx.post('https://api.telegram.org/bot'+t+'/'+method,json=kw,timeout=30)
@@ -206,6 +215,7 @@ def tg_photo(job,path,caption,kb):
  with open(path,'rb') as fh:
   with httpx.Client(timeout=httpx.Timeout(60,connect=15)) as c:
    c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendPhoto',data={'chat_id':str(job['chat']),'caption':caption,'reply_markup':json.dumps(kb)},files={'photo':('preview.jpg',fh,'image/jpeg')}).raise_for_status()
+ report(job,None,Path(path).stat().st_size)
 
 def photo_previews(job):
  """Preview sheets, each followed by its own number buttons (tap a number = download that image)."""
@@ -269,7 +279,7 @@ def present_media(job,files):
   job.update(state='ready',kind='photos',photos=[str(f) for f in images][:30])
   photo_panel(job)
   for v in videos[:3]:
-   try:upload(v,job)
+   try:upload(v,job,kind='video')
    except Exception as e:print('mixed video upload failed',type(e).__name__,flush=True)
   return
  if videos:
@@ -344,22 +354,23 @@ def instagram_flow(job):
  raise RuntimeError('instagram routes failed: '+' | '.join(errors)[:700])
 
 # ---------- delivery ----------
-def send_single(job,f):
+def send_single(job,f,count=True):
  f=Path(f);big=f.stat().st_size>9*1024*1024
  typ,key=('sendDocument','document') if big else ('sendPhoto','photo')
  with open(f,'rb') as fh:
   with httpx.Client(timeout=httpx.Timeout(120,connect=20)) as c:
    c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/'+typ,data={'chat_id':str(job['chat'])},files={key:(f.name,fh,'image/png' if f.suffix.lower()=='.png' else 'image/jpeg')}).raise_for_status()
+ if count:report(job,'photo',f.stat().st_size)
 
 def send_album(job,images):
  # Telegram accepts 2-10 photos per media group; oversized pictures go one by one as documents.
  images=[Path(f) for f in images][:30]
  small=[f for f in images if f.stat().st_size<=9*1024*1024]
  for f in images:
-  if f not in small:send_single(job,f)
+  if f not in small:send_single(job,f,count=False)
  for offset in range(0,len(small),10):
   batch=small[offset:offset+10]
-  if len(batch)==1:send_single(job,batch[0]);continue
+  if len(batch)==1:send_single(job,batch[0],count=False);continue
   with ExitStack() as stack:
    media=[];uploads={}
    for i,f in enumerate(batch):
@@ -368,8 +379,9 @@ def send_album(job,images):
     media.append({'type':'photo','media':'attach://'+part})
    with httpx.Client(timeout=httpx.Timeout(150,connect=20)) as c:
     c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendMediaGroup',data={'chat_id':str(job['chat']),'media':json.dumps(media)},files=uploads).raise_for_status()
+ report(job,'photo',sum(f.stat().st_size for f in images))
 
-def upload(file,job):
+def upload(file,job,kind=None):
  file=Path(file);big=file.stat().st_size>9*1024*1024
  typ={'.mp3':'sendAudio','.gif':'sendAnimation','.webm':'sendDocument','.zip':'sendDocument'}.get(file.suffix)
  if typ is None and file.suffix.lower() in PHOTO_EXT:typ='sendDocument' if big else 'sendPhoto'
@@ -378,6 +390,7 @@ def upload(file,job):
  with open(file,'rb') as f:
   with httpx.Client(timeout=httpx.Timeout(180,connect=20)) as c:
    c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/'+typ,data={'chat_id':str(job['chat'])},files={key:(file.name,f)}).raise_for_status()
+ report(job,kind or charge_kind(job),file.stat().st_size)
 
 def prepare_file(job,f):
  f=Path(f);exp=int(time.time())+3600
@@ -388,7 +401,7 @@ def prepare_file(job,f):
   try:
    upload(f,job);return
   except Exception as e:print('telegram file upload failed',type(e).__name__,flush=True)
- talk(job['chat'],'🔗 الملف جاهز. رابط تحميل صالح لمدة ساعة:\n'+link(job['id'],exp))
+ talk(job['chat'],'🔗 الملف جاهز. رابط تحميل صالح لمدة ساعة:\n'+link(job['id'],exp));report(job,charge_kind(job),0)
 
 def fail_reason(job,error):
  err=str(error).lower();p=site(job['url'])
@@ -427,11 +440,12 @@ def inspect(j):
   if not isinstance(info,dict) or info.get('_type') in ('playlist','multi_video'):raise ValueError('single video only')
   heights=sorted(set(int(f['height']) for f in info.get('formats',[]) if isinstance(f,dict) and f.get('vcodec') not in (None,'none') and isinstance(f.get('height'),(int,float)) and 144<=int(f['height'])<=2160))
   wanted=[v for v in (360,480,720,1080) if v in heights] or heights[-4:]
-  job.update(state='ready',title=str(info.get('title') or 'Video')[:100],duration=info.get('duration'),thumbnail=info.get('thumbnail'),qualities=wanted)
+  job.update(state='ready',title=str(info.get('title') or 'Video')[:100],duration=info.get('duration'),thumbnail=info.get('thumbnail'),qualities=wanted,desc=str(info.get('description') or '').strip()[:3500])
   buttons=[[{'text':'📲 أفضل جودة في الشات','callback_data':'a:'+j+':chat:best'},{'text':'🔗 رابط خارجي','callback_data':'a:'+j+':link:best'}]]
   for v in wanted:buttons.append([{'text':str(v)+'p شات','callback_data':'a:'+j+':chat:'+str(v)},{'text':str(v)+'p رابط','callback_data':'a:'+j+':link:'+str(v)}])
   buttons.extend([[{'text':'🎵 MP3','callback_data':'a:'+j+':audio:best'},{'text':'🖼 الغلاف','callback_data':'a:'+j+':cover:best'}],
    [{'text':'🎞 GIF','callback_data':'a:'+j+':gif:best'},{'text':'📦 ضغط','callback_data':'a:'+j+':compress:best'},{'text':'WebM','callback_data':'a:'+j+':webm:best'}]])
+  if job.get('desc'):buttons.append([{'text':'📝 الوصف / الكابشن','callback_data':'a:'+j+':caption:best'}])
   duration=int(job.get('duration') or 0)
   talk(job['chat'],'🎬 '+job['title']+'\n⏱ '+str(duration//60)+':'+str(duration%60).zfill(2)+'\nاختار الجودة والأداة:',{'inline_keyboard':buttons})
  except Exception as e:
@@ -481,7 +495,7 @@ def process(j):
    prepare_file(job,f)
   else:
    exp=int(time.time())+3600;job.update(state='complete',file=str(f),expires=exp)
-   talk(job['chat'],'🔗 رابط تنزيل صالح لمدة ساعة:\n'+link(j,exp))
+   talk(job['chat'],'🔗 رابط تنزيل صالح لمدة ساعة:\n'+link(j,exp));report(job,'video',0)
  except Exception as e:
   print('processing failure',type(e).__name__,str(e)[:200],flush=True);job['state']='failed';talk(job['chat'],fail_reason(job,e))
 
@@ -497,7 +511,7 @@ def janitor_pass(now=None):
     shutil.rmtree(DATA/j,ignore_errors=True)
     v['expired']=True
     if v.get('state')!='failed':v['state']='expired'
-    for k in ('file','photos','thumbnail','qualities'):v.pop(k,None)
+    for k in ('file','photos','thumbnail','qualities','desc'):v.pop(k,None)
 
 def janitor():
  while True:
@@ -541,6 +555,9 @@ def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
    pool.submit(photo_action,j,p.mode,p.quality);return {'ok':True}
   if job.get('expired'):raise HTTPException(410,'expired')
   if job.get('kind')=='photos':raise HTTPException(409,'photo job')
+  if p.mode=='caption':
+   if not job.get('desc'):raise HTTPException(422,'no description')
+   pool.submit(talk,p.chat_id,'📝 '+job['desc']);return {'ok':True}
   if p.mode=='cover':
    if not job.get('thumbnail'):raise HTTPException(422,'no cover')
    pool.submit(send,'sendPhoto',chat_id=p.chat_id,photo=job['thumbnail']);return {'ok':True}
@@ -557,6 +574,7 @@ def download(j:str,until:int=0,sig:str=''):
  if not job or until<now or until>now+7200 or not sig or not hmac.compare_digest(sig,sig_for(j,until)):raise HTTPException(403,'expired')
  file=Path(job.get('file',''))
  if job.get('expires')!=until or not file.is_file() or file.parent!=DATA/j:raise HTTPException(404,'missing')
+ report(job,None,file.stat().st_size)
  return FileResponse(file,filename='mediahub'+file.suffix,headers={'Cache-Control':'private, no-store','X-Robots-Tag':'noindex'})
 def sig_for(j,until):return sig_fn(j,until)
 def sig_fn(j,until):return sig(j,until)
