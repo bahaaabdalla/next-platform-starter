@@ -4,8 +4,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 RUN pip install --no-cache-dir "yt-dlp[default,curl-cffi]" gallery-dl "httpx[socks]" "requests[socks]" PySocks
 # WARP tooling: wgcf registers a free WARP identity, wireproxy exposes it as a local SOCKS5 proxy (userspace, no NET_ADMIN needed)
 RUN curl -fsSL https://github.com/pufferffish/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz | tar -xz -C /usr/local/bin wireproxy \
- && URL=$(curl -fsSL https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep browser_download_url | grep linux_amd64 | head -1 | cut -d '"' -f4) \
- && curl -fsSL -o /usr/local/bin/wgcf "$URL" && chmod +x /usr/local/bin/wgcf /usr/local/bin/wireproxy
+ && TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/ViRb3/wgcf/releases/latest | sed 's#.*/tag/##') \
+ && VER=${TAG#v} \
+ && curl -fsSL -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/${TAG}/wgcf_${VER}_linux_amd64" \
+ && chmod +x /usr/local/bin/wgcf /usr/local/bin/wireproxy && echo "wgcf tag: ${TAG}"
 WORKDIR /app
 COPY lab.py .
 ENV PORT=10000
