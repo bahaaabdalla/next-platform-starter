@@ -71,6 +71,79 @@ def gallery_files(url,folder):
  if not files:raise RuntimeError('gallery-dl: '+(p.stderr or p.stdout)[-650:])
  return files
 
+
+def instagram_graphql(job):
+ """Read publicly accessible media metadata without Instagram account cookies."""
+ match=re.search(r'/(?:reel|p|tv)/([A-Za-z0-9_-]+)',urlsplit(job['url']).path)
+ if not match:raise RuntimeError('unsupported Instagram URL')
+ code=match.group(1)
+ headers={
+  'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'X-IG-App-ID':'936619743392459',
+  'Referer':'https://www.instagram.com/',
+ }
+ doc=os.getenv('IG_GRAPHQL_DOC_ID','27128499623469141')
+ with httpx.Client(headers=headers,follow_redirects=False,timeout=httpx.Timeout(14,connect=7)) as client:
+  homepage=client.get('https://www.instagram.com/')
+  csrf=client.cookies.get('csrftoken','')
+  if csrf:headers['X-CSRFToken']=csrf
+  variables={'shortcode':code,'__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider':False}
+  response=client.post('https://www.instagram.com/graphql/query',headers=headers,
+     data={'doc_id':doc,'variables':json.dumps(variables,separators=(',',':'))})
+  if response.status_code!=200:raise RuntimeError('Instagram GraphQL HTTP '+str(response.status_code))
+  try:body=response.json()
+  except Exception:raise RuntimeError('Instagram GraphQL non-JSON response')
+  info=body.get('data') or {}
+  group=(info.get('xdt_api__v1__media__shortcode__web_info') or {}).get('items') or []
+  if not group:raise RuntimeError('Instagram public GraphQL returned no media')
+  item=group[0]
+  elements=item.get('carousel_media') or [item]
+  medias=[]
+  for element in elements[:20]:
+   versions=element.get('video_versions') or []
+   if versions and versions[0].get('url'):medias.append(('video',versions[0]['url']))
+   else:
+    images=(element.get('image_versions2') or {}).get('candidates') or []
+    if images and images[0].get('url'):medias.append(('image',images[0]['url']))
+  if not medias:raise RuntimeError('Instagram public GraphQL returned no downloadable formats')
+  folder=DATA/job['id']/'instagram';folder.mkdir(parents=True,exist_ok=True)
+  paths=[]
+  with httpx.Client(timeout=httpx.Timeout(35,connect=8),follow_redirects=True,headers={'User-Agent':headers['User-Agent']}) as media_client:
+   for i,(kind,source) in enumerate(medias):
+    domain=(urlsplit(source).hostname or '').lower()
+    if urlsplit(source).scheme!='https' or not (domain.endswith('.fbcdn.net') or domain.endswith('.cdninstagram.com') or domain in ('fbcdn.net','cdninstagram.com')):
+     raise RuntimeError('untrusted Instagram media host')
+    suffix='.mp4' if kind=='video' else '.jpg'
+    target=folder/(str(i+1).zfill(2)+suffix)
+    with media_client.stream('GET',source) as stream:
+     stream.raise_for_status()
+     final=(urlsplit(str(stream.url)).hostname or '').lower()
+     if not (final.endswith('.fbcdn.net') or final.endswith('.cdninstagram.com') or final in ('fbcdn.net','cdninstagram.com')):
+      raise RuntimeError('untrusted Instagram media redirect')
+     size=0
+     with open(target,'wb') as fd:
+      for chunk in stream.iter_bytes(chunk_size=131072):
+       size+=len(chunk)
+       if size>90*1024*1024:raise RuntimeError('Instagram media too large')
+       fd.write(chunk)
+    paths.append(target)
+  if len(paths)==1 and paths[0].suffix=='.mp4':
+   talk(job['chat'],'🎬 تم استخراج ريل Instagram العام. جاري إرسال الفيديو…')
+   prepare_file(job,paths[0]);return
+  images=[f for f in paths if f.suffix=='.jpg']
+  if images:
+   talk(job['chat'],'🖼 تم استخراج '+str(len(images))+' صورة من Instagram.')
+   if len(images)>1:
+    archive=DATA[job['id']]/'instagram-photos.zip'
+    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as z:
+     for f in images:z.write(f,arcname=f.name)
+    try:send_album(job,images)
+    except Exception as e:print('instagram album error',type(e).__name__,flush=True)
+    prepare_file(job,archive)
+   else:prepare_file(job,images[0])
+   return
+  prepare_file(job,paths[0])
+
 def send_album(job,images):
  # Telegram accepts 2-10 photos in one media group.
  if not images:return
@@ -141,6 +214,10 @@ def inspect(j):
  job=jobs[j];p=site(job['url'])
  try:
   job['id']=j
+  # Instagram reels sometimes expose public GraphQL media despite HTML login redirects.
+  if p=='instagram':
+   try:instagram_graphql(job);return
+   except Exception as e:print('instagram public graphql failed',type(e).__name__,str(e)[:180],flush=True)
   # TikTok photo-mode is not a yt-dlp video. Handle it with gallery-dl.
   if p=='tiktok' and '/photo/' in job['url']:
    deliver_gallery(job,job['url']);return
