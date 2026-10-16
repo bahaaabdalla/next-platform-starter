@@ -406,6 +406,7 @@ def prepare_file(job,f):
 def fail_reason(job,error):
  err=str(error).lower();p=site(job['url'])
  if 'too large' in err or 'larger than' in err:return '❌ الملف أكبر من الحد المسموح (120MB). جرّب جودة أقل.'
+ if 'conversion failed' in err:return '❌ فشل تحويل الملف بالأداة دي. جرّب أداة تانية أو جودة أقل.'
  if 'timeout' in err:return '❌ انتهت مهلة الفحص. المنصة لم تستجب في الوقت المحدد، جرّب الرابط لاحقًا.'
  if p=='youtube':
   if 'not a bot' in err or 'sign in' in err:return '❌ YouTube رفض الطلب (حماية ضد الروبوتات) حتى بعد تجربة المسارات البديلة. جرّب مرة ثانية بعد دقيقة.'
@@ -440,7 +441,7 @@ def inspect(j):
   if not isinstance(info,dict) or info.get('_type') in ('playlist','multi_video'):raise ValueError('single video only')
   heights=sorted(set(int(f['height']) for f in info.get('formats',[]) if isinstance(f,dict) and f.get('vcodec') not in (None,'none') and isinstance(f.get('height'),(int,float)) and 144<=int(f['height'])<=2160))
   wanted=[v for v in (360,480,720,1080) if v in heights] or heights[-4:]
-  job.update(state='ready',title=str(info.get('title') or 'Video')[:100],duration=info.get('duration'),thumbnail=info.get('thumbnail'),qualities=wanted,desc=str(info.get('description') or '').strip()[:3500])
+  job.update(state='ready',probed=True,title=str(info.get('title') or 'Video')[:100],duration=info.get('duration'),thumbnail=info.get('thumbnail'),qualities=wanted,desc=str(info.get('description') or '').strip()[:3500])
   buttons=[[{'text':'📲 أفضل جودة في الشات','callback_data':'a:'+j+':chat:best'},{'text':'🔗 رابط خارجي','callback_data':'a:'+j+':link:best'}]]
   for v in wanted:buttons.append([{'text':str(v)+'p شات','callback_data':'a:'+j+':chat:'+str(v)},{'text':str(v)+'p رابط','callback_data':'a:'+j+':link:'+str(v)}])
   buttons.extend([[{'text':'🎵 MP3','callback_data':'a:'+j+':audio:best'},{'text':'🖼 الغلاف','callback_data':'a:'+j+':cover:best'}],
@@ -468,19 +469,28 @@ def fetch_video(job,folder,selector):
   for f in folder.glob('video.*'):f.unlink(missing_ok=True)
  raise last
 
+def source_file(job):
+ """The full video already downloaded for this job (kept for 2h so every tool can reuse it), or None."""
+ s=job.get('src')
+ return Path(s) if s and Path(s).is_file() else None
+
 def process(j):
  job=jobs[j];folder=DATA/j;folder.mkdir(exist_ok=True)
  try:
   talk(job['chat'],'⏳ جاري تجهيز الملف…')
   limit=120*1024*1024
-  quality=job.get('quality','best')
-  selector='bv*+ba/b' if quality=='best' else 'bv*[height<='+str(int(quality))+']+ba/b[height<='+str(int(quality))+']/b'
-  fetch_video(job,folder,selector)
-  candidates=[p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.mp4','.webm','.mkv')]
-  if not candidates:raise ValueError('file too large or no media file')
-  f=max(candidates,key=lambda p:p.stat().st_size)
-  if f.stat().st_size>limit:raise ValueError('file too large')
-  mode=job['mode']
+  mode=job['mode'];quality=job.get('quality','best')
+  f=source_file(job)
+  # Tools (MP3/GIF/compress/WebM) work on whatever video we already have; chat/link reuse it only when the quality matches.
+  if not (f and (mode in ('audio','gif','compress','webm') or job.get('src_q')==quality)):
+   for old in folder.glob('video.*'):old.unlink(missing_ok=True)
+   selector='bv*+ba/b' if quality=='best' else 'bv*[height<='+str(int(quality))+']+ba/b[height<='+str(int(quality))+']/b'
+   fetch_video(job,folder,selector)
+   candidates=[p for p in folder.glob('video.*') if p.is_file() and p.suffix.lower() in ('.mp4','.webm','.mkv')]
+   if not candidates:raise ValueError('file too large or no media file')
+   f=max(candidates,key=lambda p:p.stat().st_size)
+   if f.stat().st_size>limit:raise ValueError('file too large')
+   job['src']=str(f);job['src_q']=quality
   if mode in ('audio','gif','compress','webm'):
    ext={'audio':'.mp3','gif':'.gif','compress':'.mp4','webm':'.webm'}[mode]
    out=folder/('result'+ext)
@@ -488,7 +498,10 @@ def process(j):
         'gif':['-t','15','-vf','fps=10,scale=480:-1:flags=lanczos','-loop','0'],
         'compress':['-c:v','libx264','-preset','veryfast','-crf','30','-c:a','aac','-b:a','96k'],
         'webm':['-c:v','libvpx-vp9','-b:v','0','-crf','36','-deadline','realtime','-cpu-used','5','-c:a','libopus','-b:a','96k']}[mode]
-   subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(f)]+opt+[str(out)],check=True,timeout=240,capture_output=True)
+   try:subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(f)]+opt+[str(out)],check=True,timeout=240,capture_output=True)
+   except subprocess.TimeoutExpired:raise RuntimeError('timeout after 240s')
+   except subprocess.CalledProcessError as e:
+    print('ffmpeg failed',mode,(e.stderr or b'')[-300:],flush=True);raise RuntimeError('conversion failed')
    f=out
   if f.stat().st_size>limit:raise ValueError('converted file too large')
   if mode!='link':
@@ -497,7 +510,13 @@ def process(j):
    exp=int(time.time())+3600;job.update(state='complete',file=str(f),expires=exp)
    talk(job['chat'],'🔗 رابط تنزيل صالح لمدة ساعة:\n'+link(j,exp));report(job,'video',0)
  except Exception as e:
-  print('processing failure',type(e).__name__,str(e)[:200],flush=True);job['state']='failed';talk(job['chat'],fail_reason(job,e))
+  print('processing failure',type(e).__name__,str(e)[:200],flush=True)
+  if not source_file(job):
+   for old in folder.glob('video.*'):old.unlink(missing_ok=True)
+  job['state']='ready' if job.get('probed') else 'failed'   # a failed tool must not lock the buttons; the user can retry
+  talk(job['chat'],fail_reason(job,e))
+ finally:
+  job['busy']=False
 
 # ---------- housekeeping ----------
 def janitor_pass(now=None):
@@ -511,7 +530,7 @@ def janitor_pass(now=None):
     shutil.rmtree(DATA/j,ignore_errors=True)
     v['expired']=True
     if v.get('state')!='failed':v['state']='expired'
-    for k in ('file','photos','thumbnail','qualities','desc'):v.pop(k,None)
+    for k in ('file','src','photos','thumbnail','qualities','desc'):v.pop(k,None)
 
 def janitor():
  while True:
@@ -562,8 +581,10 @@ def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
    if not job.get('thumbnail'):raise HTTPException(422,'no cover')
    pool.submit(send,'sendPhoto',chat_id=p.chat_id,photo=job['thumbnail']);return {'ok':True}
   if p.mode not in ('chat','link','audio','gif','compress','webm') or (p.quality!='best' and not (p.quality.isdigit() and int(p.quality) in job.get('qualities',[]))):raise HTTPException(422,'invalid option')
-  if job['state']!='ready':raise HTTPException(409,'not ready')
-  job.update(state='processing',mode=p.mode,quality=p.quality)
+  # Any tool can run on a probed video at any time, also after an earlier download finished (state 'complete').
+  if not job.get('probed'):raise HTTPException(409,'not ready')
+  if job.get('busy'):raise HTTPException(409,'busy')
+  job.update(state='processing',busy=True,mode=p.mode,quality=p.quality)
  pool.submit(process,j);return {'ok':True}
 @app.post('/stats')
 def stats(x_worker_secret:str|None=Header(None)):
