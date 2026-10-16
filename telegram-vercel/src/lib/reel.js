@@ -4,7 +4,7 @@
 import {tg,send} from "./tg.js";
 import {cmd,pipe} from "./redis.js";
 import {P,getCfg,reelState,isAdmin} from "./quota.js";
-import {SURAH,parseVerse} from "./quran.js";
+import {SURAH,AYAT,parseVerse} from "./quran.js";
 import {planLine} from "./admin.js";
 import {PLANS_TEXT} from "./texts.js";
 
@@ -13,6 +13,62 @@ export const initReel=ctx=>{X=ctx};
 
 const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["maher","ماهر المعيقلي"],["dossari","ياسر الدوسري"],["shatri","أبو بكر الشاطري"]];
 const RNAME=Object.fromEntries(RECITERS);
+// ---------- recitation length estimate (before the reel is made) ----------
+// everyayah serves constant-bitrate MP3s, so length ~= bytes*8/bitrate. The real bitrate is read once per reciter from an
+// MP3 frame header (falls back to the folder's nominal kbps); per-ayah seconds are cached in Redis for good.
+const FOLDER={afasy:["Alafasy_128kbps",128],basit:["Abdul_Basit_Murattal_192kbps",192],husary:["Husary_128kbps",128],minshawi:["Minshawy_Murattal_128kbps",128],sudais:["Abdurrahmaan_As-Sudais_192kbps",192],maher:["MaherAlMuaiqly128kbps",128],dossari:["Yasser_Ad-Dussary_128kbps",128],shatri:["Abu_Bakr_Ash-Shaatree_128kbps",128]};
+const ayahUrl=(k,s,a)=>"https://everyayah.com/data/"+FOLDER[k][0]+"/"+String(s).padStart(3,"0")+String(a).padStart(3,"0")+".mp3";
+const BR1=[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320],BR2=[0,8,16,24,32,40,48,56,64,80,96,112,128,144,160];
+export function mp3Kbps(b){
+  let i=0;
+  if(b.length>10&&b[0]===0x49&&b[1]===0x44&&b[2]===0x33)i=10+((b[6]&127)<<21|(b[7]&127)<<14|(b[8]&127)<<7|(b[9]&127));
+  for(;i+3<b.length;i++){
+    if(b[i]!==0xff||(b[i+1]&0xe0)!==0xe0)continue;
+    const ver=(b[i+1]>>3)&3,layer=(b[i+1]>>1)&3,bi=b[i+2]>>4;
+    if(ver===1||layer!==1||bi===0||bi===15)continue;   // need MPEG layer III with a real bitrate
+    return (ver===3?BR1:BR2)[bi];
+  }
+  return 0;
+}
+async function kbpsFor(k){
+  const key=P+"qbr:"+k;
+  try{const v=Number(await cmd("GET",key));if(v>0)return v}catch{}
+  try{
+    const r=await fetch(ayahUrl(k,1,1),{headers:{range:"bytes=0-16383"},signal:AbortSignal.timeout(4000)});
+    const kb=mp3Kbps(new Uint8Array(await r.arrayBuffer()));
+    if(kb>0){await cmd("SET",key,String(kb),"EX","2592000").catch(()=>{});return kb}
+  }catch{}
+  return FOLDER[k][1];
+}
+async function ayahSecs(k,s,list){
+  const key=P+"qd:"+k,f=list.map(a=>s+":"+a);
+  let got=[];try{got=await cmd("HMGET",key,...f)||[]}catch{}
+  const out=list.map((a,i)=>Number(got[i])||0),miss=list.map((a,i)=>i).filter(i=>!out[i]);
+  if(miss.length){
+    const kb=await kbpsFor(k),save=[];
+    await Promise.all(miss.map(async i=>{try{
+      const r=await fetch(ayahUrl(k,s,list[i]),{method:"HEAD",signal:AbortSignal.timeout(4000)});
+      const n=Number(r.headers.get("content-length"));if(r.ok&&n>1000){out[i]=Math.round(n*8/(kb*1000)*10)/10;save.push(f[i],String(out[i]))}
+    }catch{}}));
+    if(save.length)await cmd("HSET",key,...save).catch(()=>{});
+  }
+  return out;
+}
+// Seconds per ayah from frm, enough to fill the plan cap (or to the requested last ayah). null when unknown.
+async function estimate(st,cap){
+  const last=st.to||Math.min(AYAT[st.surah-1],st.frm+40),est=[];let sum=0;
+  for(let a=st.frm;a<=last&&sum<=cap+1;a+=10){
+    const list=[];for(let i=a;i<=Math.min(last,a+9);i++)list.push(i);
+    const d=await ayahSecs(st.reciter,st.surah,list);if(d.some(x=>!x))return null;
+    for(const x of d){est.push(x);sum+=x}
+  }
+  return est.length?est:null;
+}
+// Mirrors the worker: whole ayat while they fit, at least one, never past the plan cap.
+function simulate(est,maxdur,cap){
+  let n=0,t=0;for(const d of est){if(n&&t+d>maxdur)break;n++;t+=d;if(t>=maxdur)break}
+  return {n,t:Math.min(t,cap)};
+}
 const MAXF=20*1024*1024,MAX_IMG=20;
 const rwKey=u=>P+"rw:"+u,imgKey=u=>P+"rwi:"+u;
 async function rwGet(u){try{const v=await cmd("GET",rwKey(u));return v?JSON.parse(v):null}catch{return null}}
@@ -129,11 +185,26 @@ function durRows(st,plan,prefix){
 }
 const sizeRow=(st,prefix)=>[{text:(st.ar==="9:16"?"✅ ":"")+"📱 9:16 ريلز/شورتس",callback_data:prefix+"a:916"},{text:(st.ar==="16:9"?"✅ ":"")+"🖥 16:9 يوتيوب",callback_data:prefix+"a:169"}];
 function quranView(st,plan){
-  const rows=durRows(st,plan,"rs:");rows.push(sizeRow(st,"rs:"));
+  const rows=durRows(st.fit?{...st,dur:-1}:st,plan,"rs:");
+  const est=st.est||null,all=est&&st.to&&est.length===st.to-st.frm+1?est.reduce((x,y)=>x+y,0):null;
+  if(st.to&&est)rows.push([{text:(st.fit?"✅ ":"")+"📏 على قد الآيات"+(all?" (~"+secs(Math.ceil(Math.min(all,plan.cap)))+")":""),callback_data:"rs:f"}]);
+  rows.push(sizeRow(st,"rs:"));
   rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"}]);
   rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
   const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n⏱ أقصى مدة: "+secs(st.dur)+" (بيقف عند آخر آية كاملة)\n📐 المقاس: "+st.ar+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":"ملغية");
+  const lim=st.fit?plan.cap:st.dur;
+  let info="⏱ أقصى مدة: "+(st.fit?"على قد الآيات":secs(st.dur)+" (بيقف عند آخر آية كاملة)");
+  if(est){
+    const sm=simulate(est,lim,plan.cap),upto=st.frm+sm.n-1,len=secs(Math.round(sm.t+1));
+    if(st.to){
+      if(all!==null)info+="\n🕰 الآيات كلها بصوت "+RNAME[st.reciter]+": حوالي "+secs(Math.round(all));
+      if(upto>=st.to)info+="\n✅ المدة كفاية للآيات كلها · الريل هيطلع حوالي "+len;
+      else if(all!==null&&all>plan.cap)info+="\n⚠️ الآيات دي أطول من حد باقتك ("+secs(plan.cap)+")، هيتقرأ لحد آية "+ar(upto)+" بس · الريل حوالي "+len;
+      else info+="\n⚠️ بالمدة دي هيتقرأ لحد آية "+ar(upto)+" بس (الريل حوالي "+len+"). دوس «📏 على قد الآيات» تتقري كلها";
+    }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
+    if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
+  }
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
@@ -180,6 +251,7 @@ export async function reelCallback(q,d,id,user){
   const mid=q.message?.message_id;
   const edit=(text,kb)=>tg("editMessageText",{chat_id:id,message_id:mid,text,disable_web_page_preview:true,...(kb?{reply_markup:kb}:{})}).catch(e=>{if(!/not modified/.test(e.message))return send(id,text,kb)});
   if(d==="reel:new")return reelStart(id,user);
+  if(d.startsWith("rc:"))return reelContinue(id,user,d);
   if(d==="rs:x"){await rwDel(user);return edit("✖️ تم إلغاء الريل. تقدر تبدأ من جديد من /reel")}
   const st=await rwGet(user);
   if(!st)return send(id,"⌛ الجلسة دي انتهت. ابدأ من جديد من /reel");
@@ -209,14 +281,34 @@ export async function reelCallback(q,d,id,user){
   }
   // ----- Quran reels -----
   if(!st.surah)return send(id,"⌛ الجلسة دي انتهت. ابدأ من جديد من /reel");
-  if(d.startsWith("rr:")){const k=d.slice(3);if(!RNAME[k])return;Object.assign(st,{step:"settings",reciter:k,dur:Math.min(30,plan.cap),ar:"9:16",vig:true});await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb)}
+  if(d.startsWith("rr:")){
+    const k=d.slice(3);if(!RNAME[k])return;
+    Object.assign(st,{step:"settings",reciter:k,dur:Math.min(30,plan.cap),ar:st.ar||"9:16",vig:st.vig??true,fit:false});
+    st.est=await estimate(st,plan.cap).catch(()=>null);
+    if(st.to&&st.est&&st.est.length===st.to-st.frm+1&&st.est.reduce((x,y)=>x+y,0)>st.dur)st.fit=true;   // default: read every requested ayah
+    await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
+  }
   if(!st.reciter)return;
-  if(d.startsWith("rs:d:")){const n=Number(d.slice(5));if(!(n>0&&n<=plan.cap))return;st.dur=n}
+  if(d.startsWith("rs:d:")){const n=Number(d.slice(5));if(!(n>0&&n<=plan.cap))return;st.dur=n;st.fit=false}
+  else if(d==="rs:f"){if(!st.to)return;st.fit=true}
   else if(d==="rs:a:916")st.ar="9:16";else if(d==="rs:a:169")st.ar="16:9";else if(d==="rs:v")st.vig=!st.vig;
   else if(d==="rs:go"){
     const lib=await libraryFor(st);
-    return submit(id,user,plan,used,{source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
+    return submit(id,user,plan,used,{source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
   }else return;
   await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
 }
-export const isReelCallback=d=>d==="reel:new"||/^(rr|rs|rk|rm|ms):/.test(d);
+// "▶️ كمّل من آية …" under a finished Quran reel: rc:<surah>:<from>:<to|0>:<reciter>:<916|169>:<vig 0|1>
+async function reelContinue(id,user,d){
+  const [,s,a,to,k,o,vg]=d.split(":"),surah=Number(s),frm=Number(a),last=Number(to)||0;
+  if(!(surah>=1&&surah<=114)||!(frm>=1&&frm<=AYAT[surah-1])||(last&&!(last>=frm&&last<=AYAT[surah-1]))||!RNAME[k])return;
+  const g=await X.gate(user);if(g)return X.deny(id,g);
+  const {plan,used}=await reelState(user);
+  if(used>=plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n"+planLine(plan)+"\n\n"+PLANS_TEXT+(await contactLine()));
+  await rwDel(user);
+  const st={step:"settings",surah,frm,to:last||null,reciter:k,dur:Math.min(30,plan.cap),ar:o==="169"?"16:9":"9:16",vig:vg!=="0",fit:false};
+  st.est=await estimate(st,plan.cap).catch(()=>null);
+  if(st.to&&st.est&&st.est.length===st.to-st.frm+1&&st.est.reduce((x,y)=>x+y,0)>st.dur)st.fit=true;
+  await rwSet(user,st);const v=quranView(st,plan);return send(id,v.text,v.kb);
+}
+export const isReelCallback=d=>d==="reel:new"||/^(rr|rs|rk|rm|ms|rc):/.test(d);
