@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor
 import httpx
+import reels
 from fastapi import FastAPI,Header,HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -518,6 +519,59 @@ def process(j):
  finally:
   job['busy']=False
 
+# ---------- reel studio ----------
+reel_pool=ThreadPoolExecutor(max_workers=1)   # one render at a time: the free CPU is tiny and downloads must stay responsive
+REEL_QUEUE=int(os.getenv('REEL_QUEUE','4'))
+reel_q=[];reel_lock=threading.Lock()
+
+def tg_video(chat,path,caption,info):
+ with open(path,'rb') as fh:
+  with httpx.Client(timeout=httpx.Timeout(240,connect=20)) as c:
+   c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendVideo',
+    data={'chat_id':str(chat),'caption':caption[:1024],'supports_streaming':'true','width':str(info['width']),'height':str(info['height']),'duration':str(int(info['duration']))},
+    files={'video':('reel.mp4',fh,'video/mp4')}).raise_for_status()
+
+def reel_fail_text(e):
+ m=str(e).lower()
+ if isinstance(e,ValueError):return '❌ بيانات الريل مش صحيحة (السورة أو الآيات). جرّب تاني.'
+ if 'everyayah' in m or 'http' in m or 'connect' in m or 'recitation' in m:return '❌ مقدرتش أجيب التلاوة دلوقتي. جرّب بعد شوية أو اختار قارئ تاني.'
+ if 'timeout' in m:return '❌ الرندر أخد وقت أكتر من المسموح. جرّب مدة أقصر.'
+ return '❌ حصلت مشكلة أثناء عمل الريل. جرّب تاني.'
+
+def reel_job(rid,spec):
+ work=DATA/'reels'/rid;job={'user':spec['user_id'],'id':rid}
+ try:
+  t0=time.time()
+  out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'))
+  tg_video(spec['chat_id'],out,reels.caption(info),info)
+  print('reel ok',rid,'dur',round(info['duration'],1),'render',info['render_s'],'total',round(time.time()-t0,1),'bytes',out.stat().st_size,flush=True)
+  report(job,'reel',out.stat().st_size)
+ except Exception as e:
+  print('reel failure',rid,type(e).__name__,str(e)[:300],flush=True);talk(spec['chat_id'],reel_fail_text(e))
+ finally:
+  shutil.rmtree(work,ignore_errors=True)
+  with reel_lock:
+   if rid in reel_q:reel_q.remove(rid)
+  reels.trim_cache(DATA/'qcache')
+
+class ReelReq(BaseModel):
+ chat_id:int;user_id:int;source:str='quran';surah:int;frm:int;to:int|None=None;reciter:str;maxdur:float=30;cap:float=60;ar:str='9:16';vig:bool=True;wm:str=''
+
+@app.post('/reels')
+def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
+ auth(x_worker_secret)
+ if p.chat_id!=p.user_id or p.chat_id<=0 or p.source!='quran':raise HTTPException(422,'invalid input')
+ spec=p.model_dump()
+ spec['cap']=max(5,min(float(spec['cap']),600));spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']));spec['wm']=str(spec['wm'])[:40]
+ try:reels.validate(spec)
+ except Exception:raise HTTPException(422,'invalid reel')
+ with reel_lock:
+  if any(r.startswith(str(p.user_id)+'-') for r in reel_q):raise HTTPException(409,'busy')
+  if len(reel_q)>=REEL_QUEUE:raise HTTPException(429,'queue full')
+  rid=str(p.user_id)+'-'+uuid.uuid4().hex[:10];reel_q.append(rid);pos=len(reel_q)
+ reel_pool.submit(reel_job,rid,spec)
+ return {'ok':True,'id':rid,'position':pos}
+
 # ---------- housekeeping ----------
 def janitor_pass(now=None):
  now=now or time.time()
@@ -545,7 +599,7 @@ class Action(BaseModel):
  chat_id:int;user_id:int;mode:str;quality:str='best'
 @app.get('/')
 @app.head('/')
-def health():return {'ok':True,'worker':'BMediaHub','warp':WARP['up'],'free_tools':['download','audio','gif','compress','webm','photos']}
+def health():return {'ok':True,'worker':'BMediaHub','warp':WARP['up'],'free_tools':['download','audio','gif','compress','webm','photos','reels'],'reel_queue':len(reel_q)}
 @app.post('/jobs')
 def create(p:NewJob,x_worker_secret:str|None=Header(None)):
  auth(x_worker_secret)
