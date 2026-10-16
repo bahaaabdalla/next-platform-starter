@@ -81,6 +81,14 @@ export async function adminCommand(body,id){
     await cmd("HSET",P+"u:"+u,"nowm",on?"1":"0");await send(id,(on?"✅ تم إلغاء العلامة المائية لـ ":"✅ رجعت العلامة المائية لـ ")+u);return true}
   case "/contact":{const c=String(a[0]||"").trim();if(!/^(@[A-Za-z][A-Za-z0-9_]{3,31}|https:\/\/t\.me\/(\+[A-Za-z0-9_-]{6,64}|[A-Za-z][A-Za-z0-9_]{3,31}))$/.test(c)){await send(id,"الاستخدام: /contact @support_channel أو /contact https://t.me/... (قناة أو حساب الاشتراك)");return true}
     await cmd("HSET",P+"cfg","contact",c);await send(id,"✅ حساب الاشتراك: "+c);return true}
+  case "/bg":{if((a[0]||"").toLowerCase()==="off"){await cmd("DEL",P+"admcap:"+id);await send(id,"✅ خلصت إضافة الخلفيات.");return true}
+    await cmd("SET",P+"admcap:"+id,"bg","EX","3600");const [x,y]=await pipe([["SCARD",P+"bgs:916"],["SCARD",P+"bgs:169"]]);
+    await send(id,"🖼 ابعت الخلفيات دلوقتي (صور أو ملفات صور، ألبومات مسموحة). الطولي بيتحط في 9:16 والعرضي في 16:9 تلقائي.\nالمكتبة حاليًا: "+x+" طولي · "+y+" عرضي.\nلما تخلص: /bg off");return true}
+  case "/bgs":{const [x,y]=await pipe([["SCARD",P+"bgs:916"],["SCARD",P+"bgs:169"]]);await send(id,"🖼 مكتبة الخلفيات: "+x+" طولي (9:16) · "+y+" عرضي (16:9).\n/bg لإضافة · /bgclear 916|169|all للمسح");return true}
+  case "/bgclear":{const w=(a[0]||"").toLowerCase();if(!["916","169","all"].includes(w)){await send(id,"الاستخدام: /bgclear 916|169|all");return true}
+    await pipe((w==="all"?["916","169"]:[w]).map(o=>["DEL",P+"bgs:"+o]));await send(id,"🗑 اتمسحت خلفيات "+w);return true}
+  case "/logo":{if((a[0]||"").toLowerCase()==="off"){await pipe([["HDEL",P+"cfg","logo"],["DEL",P+"admcap:"+id]]);await send(id,"✅ اتشال اللوجو، والعلامة المكتوبة رجعت.");return true}
+    await cmd("SET",P+"admcap:"+id,"logo","EX","1800");await send(id,"🖼 ابعت اللوجو دلوقتي (PNG بخلفية شفافة، كملف أفضل). /logo off لشيله.");return true}
   case "/broadcast":{if(!arg){await send(id,"الاستخدام: /broadcast نص الرسالة");return true}
     const ids=await cmd("SMEMBERS",P+"users");let ok=0,fail=0,i=0;const end=Date.now()+48000;
     for(;i<ids.length&&Date.now()<end;i++){try{await send(ids[i],arg);ok++}catch{fail++}await sleep(40)}
