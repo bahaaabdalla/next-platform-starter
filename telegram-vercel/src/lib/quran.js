@@ -10,7 +10,7 @@ const ALIAS={"\u064a\u0627\u0633\u064a\u0646":36,"\u064a\u0633\u0646":36,"\u0627
 export function parseVerse(input){
   let t=norm(input).replace(/\u0633\u0648\u0631\u0647|\u0633\u0648\u0631\u0629/g," ").replace(/[\u060c,:\u061b\/]/g," ").replace(/[\u2013\u2014~]/g,"-").replace(/\s*-\s*/g,"-").replace(/\s+/g," ").trim();
   if(!t)return null;
-  const nums=(t.match(/\d+(?:-\d+)?/g)||[]);const words=t.replace(/\d+(?:-\d+)?/g," ").replace(/\s+/g," ").trim();
+  const nums=(t.match(/\d+(?:-\d+)?/g)||[]);const words=t.replace(/\d+(?:-\d+)?/g," ").replace(/-/g," ").replace(/\s+/g," ").trim();
   let s=0,range=null;
   if(words){
     const k=words.replace(/\s+/g,"").replace(/^\u0627\u0644/,"");let a=ALIAS[k]??ALIAS[words.replace(/\s+/g,"")];

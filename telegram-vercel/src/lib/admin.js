@@ -79,7 +79,7 @@ export async function adminCommand(body,id){
     await send(Number(u),"🎉 تم تفعيل "+PLANS[k].name+" لمدة "+days+" يوم. ابدأ من /reel").catch(()=>{});return true}
   case "/nowm":{const u=uid(a[0]),on=(a[1]||"on").toLowerCase()!=="off";if(!u){await send(id,"الاستخدام: /nowm ID on|off");return true}
     await cmd("HSET",P+"u:"+u,"nowm",on?"1":"0");await send(id,(on?"✅ تم إلغاء العلامة المائية لـ ":"✅ رجعت العلامة المائية لـ ")+u);return true}
-  case "/contact":{const c=String(a[0]||"").trim();if(!/^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(c)){await send(id,"الاستخدام: /contact @username (الحساب اللي المستخدمين يكلموه للاشتراك)");return true}
+  case "/contact":{const c=String(a[0]||"").trim();if(!/^(@[A-Za-z][A-Za-z0-9_]{3,31}|https:\/\/t\.me\/(\+[A-Za-z0-9_-]{6,64}|[A-Za-z][A-Za-z0-9_]{3,31}))$/.test(c)){await send(id,"الاستخدام: /contact @support_channel أو /contact https://t.me/... (قناة أو حساب الاشتراك)");return true}
     await cmd("HSET",P+"cfg","contact",c);await send(id,"✅ حساب الاشتراك: "+c);return true}
   case "/broadcast":{if(!arg){await send(id,"الاستخدام: /broadcast نص الرسالة");return true}
     const ids=await cmd("SMEMBERS",P+"users");let ok=0,fail=0,i=0;const end=Date.now()+48000;
