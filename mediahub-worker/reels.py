@@ -54,7 +54,10 @@ def validate(spec):
 # ---------- audio ----------
 def run(argv,timeout):
  p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
- if p.returncode:raise RuntimeError(argv[0]+' failed: '+p.stderr.decode('utf-8','ignore')[-300:])
+ if p.returncode:
+  err=[l for l in p.stderr.decode('utf-8','ignore').splitlines() if l.strip()]
+  print(argv[0],'stderr:',' | '.join(err[:6])[:600],flush=True)   # the first lines carry the real cause
+  raise RuntimeError(argv[0]+' failed: '+' | '.join(err[-3:])[-300:])
  return p.stdout.decode('utf-8','ignore')
 
 def duration(f):
@@ -200,7 +203,7 @@ def build_cmd(W,H,bgs,total,pages,chrome,audio,out):
   dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][i%4]
   x='(iw-ow)/2' if dx==0 else ('(iw-ow)*t/%.3f'%s if dx>0 else '(iw-ow)*(1-t/%.3f)'%s)
   y='(ih-oh)/2' if dy==0 else ('(ih-oh)*t/%.3f'%s if dy>0 else '(ih-oh)*(1-t/%.3f)'%s)
-  fl.append('[%d:v]fps=%d,trim=duration=%.3f,setpts=PTS-STARTPTS,crop=%d:%d:%s:%s,setsar=1,format=yuv420p[b%d]'%(i,FPS,s,W,H,x,y,i))
+  fl.append('[%d:v]fps=%d,trim=duration=%.3f,setpts=PTS-STARTPTS,crop=%d:%d:%s:%s,setsar=1,format=yuv420p,fps=%d[b%d]'%(i,FPS,s,W,H,x,y,FPS,i))   # trailing fps: FFmpeg 7 xfade needs a declared constant rate
  cur='b0';off=0.0
  for i in range(1,n):
   off+=segs[i-1]-XF
