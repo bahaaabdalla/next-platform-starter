@@ -134,19 +134,29 @@ def text_png(lines,W,H,dest):
  full.crop(box).save(dest)
  return dest,box[0],box[1]   # only the text box is overlaid: blending a full frame per page was a large part of the cost
 
-def chrome_png(W,H,label,wm,dest,vignette=False):
- """Static layer: surah label on top, watermark at the bottom."""
+def chrome_png(W,H,label,wm,dest,vignette=False,logo=None):
+ """Static layer: optional label on top, watermark (logo image if provided, else text) at the bottom, optional vignette."""
  from PIL import Image,ImageDraw,ImageFilter
  img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
  if vignette:sh=vignette_layer(W,H)
  d=ImageDraw.Draw(img);ds=ImageDraw.Draw(sh)
- lf=font(UI_FONT,34 if W<H else 30);y=int(H*0.07)
- for dd,fill,off in ((ds,(0,0,0,200),2),(d,(255,255,255,220),0)):
-  dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar')
+ if label:
+  lf=font(UI_FONT,34 if W<H else 30);y=int(H*0.07)
+  for dd,fill,off in ((ds,(0,0,0,200),2),(d,(255,255,255,220),0)):
+   dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar')
  if wm:
-  wf=font(UI_FONT,26);yb=H-int(H*0.06)
-  for dd,fill,off in ((ds,(0,0,0,170),2),(d,(255,255,255,160),0)):
-   dd.text((W//2+off,yb+off),wm,font=wf,fill=fill,anchor='mb')
+  placed=False
+  if logo and Path(logo).exists():
+   try:
+    with Image.open(logo) as lg:
+     lg=lg.convert('RGBA');tw=int(W*(0.22 if W<H else 0.13));lg=lg.resize((tw,max(1,int(lg.height*tw/lg.width))),Image.LANCZOS)
+     a=lg.split()[3].point(lambda v:int(v*0.85));lg.putalpha(a)
+     img.alpha_composite(lg,((W-lg.width)//2,H-int(H*0.05)-lg.height));placed=True
+   except Exception:placed=False
+  if not placed:
+   wf=font(UI_FONT,26);yb=H-int(H*0.06)
+   for dd,fill,off in ((ds,(0,0,0,170),2),(d,(255,255,255,160),0)):
+    dd.text((W//2+off,yb+off),wm,font=wf,fill=fill,anchor='mb')
  Image.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)),img).save(dest)
  return dest
 
@@ -184,42 +194,81 @@ def placeholder_bg(W,H,seed,dest):
  ImageChops.add(img,glow).save(dest,quality=90)
  return dest
 
-# ---------- render ----------
+# ---------- render (two light passes so peak memory stays far below 512 MB) ----------
+FF=['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-filter_complex_threads','1','-filter_threads','1']
+def x264(crf,preset):
+ # FFmpeg sizes threads from the host's core count (dozens on shared hosts) and every x264 frame thread plus the
+ # lookahead holds full frames; pin them low.
+ return ['-c:v','libx264','-preset',preset,'-crf',str(crf),'-pix_fmt','yuv420p','-threads',os.getenv('REEL_THREADS','2'),
+         '-x264-params','rc-lookahead=10:sync-lookahead=0:ref=2']
+
 def plan_segments(total,n_bg):
  n=max(1,n_bg);seg=(total+XF*(n-1))/n
  return [seg]*n
 
-def build_cmd(W,H,bgs,total,pages,chrome,audio,out):
- n=len(bgs);segs=plan_segments(total,n)
- args=['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y']
- # Every still is decoded once: backgrounds at 1 fps (the fps filter repeats frames in memory), overlays as single frames
- # that the overlay filter keeps showing (repeatlast). Decoding PNGs 25x per second was the main render cost.
- for b,s in zip(bgs,segs):args+=['-loop','1','-framerate','1','-t','%.3f'%(s+1),'-i',str(b)]
- for (p,_,_),_,_ in pages:args+=['-i',str(p)]
- args+=['-i',str(chrome)]
- args+=['-i',str(audio)]
- fl=[]
- for i,s in enumerate(segs):
-  dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][i%4]
-  x='(iw-ow)/2' if dx==0 else ('(iw-ow)*t/%.3f'%s if dx>0 else '(iw-ow)*(1-t/%.3f)'%s)
-  y='(ih-oh)/2' if dy==0 else ('(ih-oh)*t/%.3f'%s if dy>0 else '(ih-oh)*(1-t/%.3f)'%s)
-  fl.append('[%d:v]fps=%d,trim=duration=%.3f,setpts=PTS-STARTPTS,crop=%d:%d:%s:%s,setsar=1,format=yuv420p,fps=%d[b%d]'%(i,FPS,s,W,H,x,y,FPS,i))   # trailing fps: FFmpeg 7 xfade needs a declared constant rate
+def fit_cover(src,W,H,dest,scale=1.18):
+ """Any photo -> exactly (W,H)*scale, centre-cropped, EXIF-rotated. Big phone photos are shrunk here, not in FFmpeg."""
+ from PIL import Image,ImageOps
+ BW,BH=int(W*scale)&~1,int(H*scale)&~1
+ with Image.open(src) as im:
+  im=ImageOps.exif_transpose(im).convert('RGB')
+  r=max(BW/im.width,BH/im.height);im=im.resize((max(BW,int(im.width*r+0.5)),max(BH,int(im.height*r+0.5))),Image.LANCZOS)
+  l,t=(im.width-BW)//2,(im.height-BH)//2;im.crop((l,t,l+BW,t+BH)).save(dest,quality=90)
+ return dest
+
+def stills_track(W,H,stills,total,dest,move=True):
+ """Pass 1: slow pans over the stills with crossfades -> silent mezzanine video."""
+ n=len(stills);segs=plan_segments(total,n);args=list(FF);fl=[]
+ for b,sg in zip(stills,segs):args+=['-loop','1','-framerate','1','-t','%.3f'%(sg+1),'-i',str(b)]
+ for i,sg in enumerate(segs):
+  dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][i%4] if move else (0,0)
+  x='(iw-ow)/2' if dx==0 else ('(iw-ow)*t/%.3f'%sg if dx>0 else '(iw-ow)*(1-t/%.3f)'%sg)
+  y='(ih-oh)/2' if dy==0 else ('(ih-oh)*t/%.3f'%sg if dy>0 else '(ih-oh)*(1-t/%.3f)'%sg)
+  # trailing fps: FFmpeg 7 xfade needs a declared constant rate
+  fl.append('[%d:v]fps=%d,trim=duration=%.3f,setpts=PTS-STARTPTS,crop=%d:%d:%s:%s,setsar=1,format=yuv420p,fps=%d[b%d]'%(i,FPS,sg,W,H,x,y,FPS,i))
  cur='b0';off=0.0
  for i in range(1,n):
   off+=segs[i-1]-XF
   fl.append('[%s][b%d]xfade=transition=fade:duration=%.2f:offset=%.3f[x%d]'%(cur,i,XF,off,i));cur='x%d'%i
- for k,((p,px,py),t0,t1) in enumerate(pages):
-  idx=n+k
-  fl.append("[%s][%d:v]overlay=%d:%d:eof_action=repeat:enable='between(t,%.3f,%.3f)'[t%d]"%(cur,idx,px,py,t0,t1,k));cur='t%d'%k
- ci=n+len(pages)
- fl.append('[%s][%d:v]overlay=0:0:eof_action=repeat,format=yuv420p[vout]'%(cur,ci))
- ai=ci+1
- args+=['-filter_complex',';'.join(fl),'-map','[vout]','-map','%d:a'%ai,'-t','%.3f'%total,
-        '-r',str(FPS),'-c:v','libx264','-preset',os.getenv('REEL_PRESET','veryfast'),'-crf','24','-maxrate','2500k','-bufsize','5000k',
-        '-c:a','aac','-b:a','128k','-movflags','+faststart','-shortest',str(out)]
- return args
+ args+=['-filter_complex',';'.join(fl),'-map','['+cur+']','-t','%.3f'%total,'-r',str(FPS)]+x264(16,'ultrafast')+['-an',str(dest)]
+ run(args,int(os.getenv('REEL_TIMEOUT','1200')))
+ return dest
 
-def render_quran(spec,work,cache,on_stage=None):
+def video_track(W,H,src,total,dest):
+ """Pass 1 for a video source: cover-crop to the frame, muted, looped if it is shorter than the reel."""
+ args=list(FF)+['-stream_loop','-1','-i',str(src),'-t','%.3f'%total,
+  '-vf','scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d,format=yuv420p'%(W,H,W,H,FPS)]+x264(18,'ultrafast')+['-an',str(dest)]
+ run(args,int(os.getenv('REEL_TIMEOUT','1200')))
+ return dest
+
+def compose(W,H,track,total,pages,chrome,audio,out):
+ """Pass 2: text pages + chrome (label, watermark/logo, vignette) over the track, plus the audio."""
+ args=list(FF)+['-i',str(track)]
+ for (p,_,_),_,_ in pages:args+=['-i',str(p)]
+ args+=['-i',str(chrome)]
+ if audio:args+=['-i',str(audio)]
+ fl=[];cur='0:v'
+ for k,((p,px,py),t0,t1) in enumerate(pages):
+  fl.append("[%s][%d:v]overlay=%d:%d:eof_action=repeat:enable='between(t,%.3f,%.3f)'[t%d]"%(cur,k+1,px,py,t0,t1,k));cur='t%d'%k
+ ci=len(pages)+1
+ fl.append('[%s][%d:v]overlay=0:0:eof_action=repeat,format=yuv420p[vout]'%(cur,ci))
+ args+=['-filter_complex',';'.join(fl),'-map','[vout]']
+ if audio:args+=['-map','%d:a'%(ci+1),'-c:a','aac','-b:a','128k']
+ else:args+=['-an']
+ args+=['-t','%.3f'%total,'-r',str(FPS)]+x264(24,os.getenv('REEL_PRESET','veryfast'))+['-maxrate','2500k','-bufsize','5000k','-movflags','+faststart',str(out)]
+ run(args,int(os.getenv('REEL_TIMEOUT','1200')))
+ return out
+
+def backgrounds(W,H,work,n,library=()):
+ """Stills for the reel: the uploaded background library when available, else generated placeholders."""
+ lib=[p for p in library if Path(p).exists()]
+ if lib:
+  random.shuffle(lib);pick=[lib[i%len(lib)] for i in range(n)]
+  return [fit_cover(p,W,H,work/('bg%d.jpg'%i)) for i,p in enumerate(pick)]
+ seed=random.randrange(1000)
+ return [placeholder_bg(W,H,seed+i,work/('bg%d.jpg'%i)) for i in range(n)]
+
+def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
  """Returns (video_path, info). Raises ValueError for bad input, RuntimeError for failures."""
  s,a,to=validate(spec)
  W,H=SIZES[spec['ar']]
@@ -247,16 +296,86 @@ def render_quran(spec,work,cache,on_stage=None):
  if pages:pages[-1][2]=total_v   # keep the last page up through the fade-out
  last=ayat[-1][0]
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))
- chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)))
- n_bg=max(1,min(8,math.ceil(total_v/7)))
- seed=random.randrange(1000)
- bgs=[placeholder_bg(W,H,seed+i,work/('bg%d.jpg'%i)) for i in range(n_bg)]
- out=work/'reel.mp4'
+ chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo)
  t0=time.time()
- run(build_cmd(W,H,bgs,total_v,pages,chrome,audio,out),int(os.getenv('REEL_TIMEOUT','1200')))
+ bgs=backgrounds(W,H,work,max(1,min(8,math.ceil(total_v/7))),library)
+ track=stills_track(W,H,bgs,total_v,work/'track.mp4')
+ for b in bgs:Path(b).unlink(missing_ok=True)
+ out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4')
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),
            text=' '.join(ayah_text(s,n).translate(TANWEEN)+' ﴿'+str(n).translate(AR_DIGITS)+'﴾' for n,_,_ in ayat))
  return out,info
+
+# ---------- free-form reels: your audio / your photos / a video, plus optional on-screen script ----------
+def prep_audio(src,start,dur,dest):
+ """Cut [start, start+dur] from any audio/video file, normalise to AAC with a short fade out. Returns (path, seconds)."""
+ full=duration(src)
+ if full<=0.5:raise ValueError('audio too short')
+ start=max(0.0,min(float(start),max(0.0,full-1)))
+ dur=max(1.0,min(float(dur),full-start))
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-ss','%.3f'%start,'-t','%.3f'%dur,'-i',str(src),'-vn','-ac','2','-ar','44100',
+      '-af','afade=t=in:d=0.15,afade=t=out:st=%.3f:d=0.6'%max(0,dur-0.6),'-c:a','aac','-b:a','128k',str(dest)],180)
+ return dest,dur
+
+def script_chunks(text,maxw=9):
+ """Split the on-screen script into short subtitle chunks (sentences, then at most ~9 words)."""
+ import re
+ parts=[p.strip() for p in re.split(r'(?<=[.!?؟。\n،؛])\s+|\n+',text.strip()) if p.strip()]
+ out=[]
+ for p in parts:
+  w=p.split()
+  for i in range(0,len(w),maxw):out.append(' '.join(w[i:i+maxw]))
+ return out[:120]
+
+def script_pages(text,W,H,total,work,start=0.3):
+ from PIL import Image,ImageDraw
+ chunks=script_chunks(text)
+ if not chunks:return []
+ size=46 if W<H else 40;f=font(UI_FONT,size);d=ImageDraw.Draw(Image.new('L',(8,8)))
+ wts=[max(6,len(c)) for c in chunks];tot=sum(wts);span=max(0.5,total-start-0.2);t=start;pages=[]
+ for k,(c,wt) in enumerate(zip(chunks,wts)):
+  dur=span*wt/tot;lines=wrap(d,c,f,W-140)[:3]
+  pages.append([caption_png(lines,W,H,work/('s%03d.png'%k),f,size),t,t+dur]);t+=dur
+ return pages
+
+def caption_png(lines,W,H,dest,f,size):
+ """Subtitle-style text in the lower third on a soft dark band (readable over any photo or video)."""
+ from PIL import Image,ImageDraw,ImageFilter
+ lh=int(size*1.55);hgt=lh*len(lines)+30;top=int(H*(0.70 if W<H else 0.74))-hgt//2
+ img=Image.new('RGBA',(W,H),(0,0,0,0));d=ImageDraw.Draw(img)
+ widest=max(d.textlength(l,font=f,direction='rtl',language='ar') for l in lines)
+ bx0=int(W/2-widest/2-28);bx1=int(W/2+widest/2+28)
+ band=Image.new('RGBA',(W,H),(0,0,0,0));ImageDraw.Draw(band).rounded_rectangle((bx0,top,bx1,top+hgt),radius=22,fill=(0,0,0,135))
+ img=Image.alpha_composite(band,img);d=ImageDraw.Draw(img)
+ for i,l in enumerate(lines):d.text((W//2,top+15+i*lh),l,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar')
+ box=img.getbbox() or (0,0,2,2);box=(max(0,box[0]-2)&~1,max(0,box[1]-2)&~1,min(W,box[2]+2),min(H,box[3]+2))
+ img.crop(box).save(dest)
+ return dest,box[0],box[1]
+
+def render_media(spec,work,audio_src=None,images=(),video_src=None,library=(),logo=None):
+ """Free-form reel. audio_src: any local audio/video file; images: local photos; video_src: local video used muted."""
+ W,H=SIZES[spec['ar']]
+ cap=float(spec.get('cap',60));want=max(3.0,min(float(spec.get('dur',30)),cap))
+ work.mkdir(parents=True,exist_ok=True);t0=time.time()
+ audio=None;total=want
+ if audio_src:
+  audio,total=prep_audio(audio_src,float(spec.get('start',0)),want,work/'audio.m4a')
+ total=max(2.0,total)
+ if video_src:
+  track=video_track(W,H,video_src,total,work/'track.mp4')
+ else:
+  if images:
+   n=len(images);per=total/n
+   stills=[fit_cover(p,W,H,work/('st%02d.jpg'%i)) for i,p in enumerate(images)]
+   if per<2.2:stills=stills[:max(1,int(total//2.2))]   # keep at least ~2 s per photo so transitions stay readable
+  else:
+   stills=backgrounds(W,H,work,max(1,min(8,math.ceil(total/7))),library)
+  track=stills_track(W,H,stills,total,work/'track.mp4',move=bool(spec.get('move',True)))
+  for b in stills:Path(b).unlink(missing_ok=True)
+ pages=script_pages(spec.get('script') or '',W,H,total,work)
+ chrome=chrome_png(W,H,'',spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo)
+ out=compose(W,H,track,total,pages,chrome,audio,work/'reel.mp4')
+ return out,dict(duration=total,width=W,height=H,render_s=round(time.time()-t0,1))
 
 def caption(info):
  head='📖 سورة %s · %s\n🎙 القارئ: %s'%(info['name'],('الآية %d'%info['frm']) if info['frm']==info['to'] else ('الآيات %d–%d'%(info['frm'],info['to'])),info['reciter'])

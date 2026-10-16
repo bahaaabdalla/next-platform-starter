@@ -531,23 +531,102 @@ def tg_video(chat,path,caption,info):
     data={'chat_id':str(chat),'caption':caption[:1024],'supports_streaming':'true','width':str(info['width']),'height':str(info['height']),'duration':str(int(info['duration']))},
     files={'video':('reel.mp4',fh,'video/mp4')}).raise_for_status()
 
-def reel_fail_text(e):
+TG_FILE_MAX=20*1024*1024   # Bot API getFile limit
+def tg_file(file_id,dest):
+ """Download a Telegram file by file_id (photos, voice notes, audio, small videos). Raises ValueError if it is too big."""
+ t=os.environ['TG_BOT_TOKEN']
+ r=httpx.post('https://api.telegram.org/bot'+t+'/getFile',json={'file_id':file_id},timeout=20)
+ j=r.json() if r.headers.get('content-type','').startswith('application/json') else {}
+ if not j.get('ok'):
+  if 'too big' in str(j.get('description','')).lower():raise ValueError('file too big')
+  raise RuntimeError('telegram getFile failed: '+str(j.get('description',''))[:80])
+ fp=j['result']['file_path'];size=j['result'].get('file_size') or 0
+ if size>TG_FILE_MAX:raise ValueError('file too big')
+ dest=Path(dest).with_suffix(Path(fp).suffix or Path(dest).suffix)
+ with httpx.stream('GET','https://api.telegram.org/file/bot'+t+'/'+fp,timeout=httpx.Timeout(60,connect=15)) as st:
+  st.raise_for_status();n=0
+  with open(dest,'wb') as fh:
+   for ch in st.iter_bytes(131072):
+    n+=len(ch)
+    if n>TG_FILE_MAX+1024:raise ValueError('file too big')
+    fh.write(ch)
+ return dest
+
+def cached_tg(file_id,folder):
+ """Library backgrounds and the logo are reused across reels: keep them on disk (until the instance restarts)."""
+ folder.mkdir(parents=True,exist_ok=True)
+ key=hashlib.sha1(file_id.encode()).hexdigest()[:20]
+ hit=[f for f in folder.glob(key+'.*') if f.stat().st_size>0]
+ if hit:return hit[0]
+ return tg_file(file_id,folder/(key+'.jpg'))
+
+def fetch_link(url,folder,want_video):
+ """Media from a public link for a reel: best audio only, or a <=720p video (with its audio). Same routes as downloads (WARP for YouTube)."""
+ folder.mkdir(parents=True,exist_ok=True)
+ p=site(url);cookies=ig_cookie_file() if p=='instagram' else None
+ sel='bv*[height<=720]+ba/b[height<=720]/b' if want_video else 'ba/b'
+ atts=yt_attempts()[:3] if p=='youtube' else [(None,None)]
+ last=None
+ for client,proxy in atts:
+  for f in folder.glob('link.*'):f.unlink(missing_ok=True)
+  r=ytdlp(url,['--max-filesize','80M','--format',sel]+(['--merge-output-format','mp4'] if want_video else [])+['-o',str(folder/'link.%(ext)s')],240,proxy,client,cookies)
+  got=[f for f in folder.glob('link.*') if f.is_file() and not f.name.endswith('.part')]
+  if not r.returncode and got:return max(got,key=lambda f:f.stat().st_size)
+  last=RuntimeError('link download failed: '+(r.stderr or r.stdout)[-300:])
+  if not retryable(last):break
+ raise last or RuntimeError('link download failed')
+
+def reel_fail_text(e,quran=True):
  m=str(e).lower()
- if isinstance(e,ValueError):return '❌ بيانات الريل مش صحيحة (السورة أو الآيات). جرّب تاني.'
- if 'everyayah' in m or 'http' in m or 'connect' in m or 'recitation' in m:return '❌ مقدرتش أجيب التلاوة دلوقتي. جرّب بعد شوية أو اختار قارئ تاني.'
+ if 'too big' in m:return '❌ الملف أكبر من 20 ميجا (حد تيليجرام للبوتات). ابعته أصغر أو ابعت رابطه.'
+ if 'audio too short' in m:return '❌ الصوت قصير جدًا أو مش واضح. ابعت ملف صوت تاني.'
+ if 'link download failed' in m:return '❌ مقدرتش أجيب الميديا من الرابط ده. اتأكد إنه عام وجرّب تاني.'
+ if isinstance(e,ValueError):return '❌ بيانات الريل مش صحيحة. جرّب تاني.' if not quran else '❌ بيانات الريل مش صحيحة (السورة أو الآيات). جرّب تاني.'
+ if quran and ('everyayah' in m or 'http' in m or 'connect' in m or 'recitation' in m):return '❌ مقدرتش أجيب التلاوة دلوقتي. جرّب بعد شوية أو اختار قارئ تاني.'
  if 'timeout' in m:return '❌ الرندر أخد وقت أكتر من المسموح. جرّب مدة أقصر.'
  return '❌ حصلت مشكلة أثناء عمل الريل. جرّب تاني.'
 
+def reel_assets(spec,work):
+ """Library backgrounds (for this aspect ratio) and the logo, both shared Telegram files cached on disk."""
+ lib=[]
+ for fid in (spec.get('bgs') or [])[:8]:
+  try:lib.append(cached_tg(fid,DATA/'bgcache'))
+  except Exception as e:print('bg fetch failed',type(e).__name__,flush=True)
+ logo=None
+ if spec.get('logo') and spec.get('wm'):
+  try:logo=cached_tg(spec['logo'],DATA/'bgcache')
+  except Exception as e:print('logo fetch failed',type(e).__name__,flush=True)
+ return lib,logo
+
 def reel_job(rid,spec):
- work=DATA/'reels'/rid;job={'user':spec['user_id'],'id':rid}
+ work=DATA/'reels'/rid;job={'user':spec['user_id'],'id':rid};quran=spec.get('source')=='quran'
  try:
-  t0=time.time()
-  out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'))
-  tg_video(spec['chat_id'],out,reels.caption(info),info)
-  print('reel ok',rid,'dur',round(info['duration'],1),'render',info['render_s'],'total',round(time.time()-t0,1),'bytes',out.stat().st_size,flush=True)
+  t0=time.time();work.mkdir(parents=True,exist_ok=True)
+  lib,logo=reel_assets(spec,work)
+  if quran:
+   out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo)
+   cap=reels.caption(info)
+  else:
+   talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…')
+   src=work/'src';src.mkdir(exist_ok=True)
+   audio=video=None;images=[]
+   if spec.get('audio_file'):audio=tg_file(spec['audio_file'],src/'audio.bin')
+   if spec.get('video_file'):video=tg_file(spec['video_file'],src/'video.mp4')
+   if spec.get('url'):
+    mode=spec.get('link_mode') or 'audio'
+    got=fetch_link(spec['url'],src,want_video=mode in ('video','both'))
+    if mode in ('audio','both') and not audio:audio=got
+    if mode in ('video','both') and not video:video=got
+   for i,fid in enumerate((spec.get('images') or [])[:20]):
+    images.append(tg_file(fid,src/('img%02d.jpg'%i)))
+   out,info=reels.render_media(spec,work,audio_src=audio,images=images,video_src=video,library=lib,logo=logo)
+   for f in src.iterdir():f.unlink(missing_ok=True)
+   cap='🎬 الريل جاهز'+(' · @BMEDIAHUB_BOT' if spec.get('wm') else '')
+  tg_video(spec['chat_id'],out,cap,info)
+  print('reel ok',rid,spec.get('source'),'dur',round(info['duration'],1),'render',info['render_s'],'total',round(time.time()-t0,1),'bytes',out.stat().st_size,flush=True)
   report(job,'reel',out.stat().st_size)
  except Exception as e:
-  print('reel failure',rid,type(e).__name__,str(e)[:300],flush=True);talk(spec['chat_id'],reel_fail_text(e))
+  print('reel failure',rid,type(e).__name__,str(e)[:300],flush=True);talk(spec['chat_id'],reel_fail_text(e,quran))
  finally:
   shutil.rmtree(work,ignore_errors=True)
   with reel_lock:
@@ -555,16 +634,32 @@ def reel_job(rid,spec):
   reels.trim_cache(DATA/'qcache')
 
 class ReelReq(BaseModel):
- chat_id:int;user_id:int;source:str='quran';surah:int;frm:int;to:int|None=None;reciter:str;maxdur:float=30;cap:float=60;ar:str='9:16';vig:bool=True;wm:str=''
+ chat_id:int;user_id:int;source:str='quran'
+ surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
+ audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
+ cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[]
 
+FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
 @app.post('/reels')
 def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  auth(x_worker_secret)
- if p.chat_id!=p.user_id or p.chat_id<=0 or p.source!='quran':raise HTTPException(422,'invalid input')
+ if p.chat_id!=p.user_id or p.chat_id<=0 or p.source not in ('quran','media') or p.ar not in reels.SIZES:raise HTTPException(422,'invalid input')
  spec=p.model_dump()
- spec['cap']=max(5,min(float(spec['cap']),600));spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']));spec['wm']=str(spec['wm'])[:40]
- try:reels.validate(spec)
- except Exception:raise HTTPException(422,'invalid reel')
+ spec['cap']=max(5,min(float(spec['cap']),600));spec['wm']=str(spec['wm'])[:40]
+ spec['bgs']=[x for x in spec['bgs'] if FID.match(x)][:8]
+ if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
+ if p.source=='quran':
+  spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']))
+  try:reels.validate(spec)
+  except Exception:raise HTTPException(422,'invalid reel')
+ else:
+  spec['dur']=max(3,min(float(spec['dur']),spec['cap']));spec['start']=max(0,min(float(spec['start']),3600))
+  spec['images']=[x for x in spec['images'] if FID.match(x)][:20];spec['script']=str(spec['script'])[:1500]
+  for k in ('audio_file','video_file'):
+   if spec[k] and not FID.match(spec[k]):raise HTTPException(422,'invalid file')
+  if spec['url'] and not check_url(spec['url']):raise HTTPException(422,'invalid url')
+  if spec['link_mode'] not in ('audio','video','both'):spec['link_mode']='audio'
+  if not (spec['audio_file'] or spec['video_file'] or spec['url'] or spec['images']):raise HTTPException(422,'nothing to render')
  with reel_lock:
   if any(r.startswith(str(p.user_id)+'-') for r in reel_q):raise HTTPException(409,'busy')
   if len(reel_q)>=REEL_QUEUE:raise HTTPException(429,'queue full')
