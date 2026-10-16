@@ -28,9 +28,16 @@ export const HOWTO=`📊 نظام الاستخدام:
 • 🎁 هدية البداية: 5 تحميلات.
 • بعدها: 2 تحميل يوميًا (بتتجدد 12 بالليل بتوقيت القاهرة).
 • لو خلصت حصتك: الاشتراك في قناة إضافية بيدّيك +5 تحميلات لباقي اليوم (مرة واحدة يوميًا).`;
+export const PLANS_TEXT=`🎬 باقات صانع الريلز
+
+🆓 المجاني: ريل واحد يوميًا لحد دقيقة، بعلامة مائية.
+💎 باقة 50 جنيه/شهر: 2 ريل يوميًا، لحد 3 دقايق، من غير علامة مائية، وكل الإعدادات.
+👑 باقة 100 جنيه/شهر: 6 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية، وكل الإعدادات.`;
 export const COMMANDS=[
   {command:"start",description:"البداية والقائمة"},
+  {command:"reel",description:"صانع الريلز"},
   {command:"me",description:"رصيدي وحدود الاستخدام"},
+  {command:"plans",description:"باقات الريلز"},
   {command:"help",description:"المساعدة وشرح النظام"},
   {command:"terms",description:"شروط الاستخدام"},
   {command:"wake",description:"تنشيط الخادم"},
@@ -51,6 +58,9 @@ export const ADMIN_COMMANDS=[...COMMANDS,
   {command:"addchannel",description:"/addchannel @name"},
   {command:"delchannel",description:"/delchannel @name"},
   {command:"setmain",description:"القناة الإجبارية: /setmain @name"},
+  {command:"plan",description:"باقة ريلز: /plan ID 0|50|100 [أيام]"},
+  {command:"nowm",description:"العلامة المائية: /nowm ID on|off"},
+  {command:"contact",description:"حساب الاشتراك: /contact @user"},
   {command:"broadcast",description:"رسالة للجميع"},
   {command:"bw",description:"استهلاك الترافيك الشهري"},
   {command:"setup",description:"تطبيق الاسم والوصف"},

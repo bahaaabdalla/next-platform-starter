@@ -1,13 +1,15 @@
 import {tg,send,sleep} from "../lib/tg.js";
 import {redisOn,cmd,pipe} from "../lib/redis.js";
-import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey} from "../lib/quota.js";
+import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey,reelState} from "../lib/quota.js";
+import {SURAH,AYAT,parseVerse} from "../lib/quran.js";
+import {planLine} from "../lib/admin.js";
 import {adminCommand,adminCallback} from "../lib/admin.js";
-import {TERMS,HOWTO,ONBOARD_HEAD} from "../lib/texts.js";
+import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT} from "../lib/texts.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
 const WH=process.env.TG_PUBLIC_WEBHOOK_URL||"https://bmediahub-telegram.vercel.app/api/webhook";
-const menu={inline_keyboard:[[{text:"📥 فيديو",callback_data:"tool:video"},{text:"🎵 صوت MP3",callback_data:"tool:audio"}],[{text:"🖼 الغلاف",callback_data:"tool:cover"},{text:"📦 ضغط",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 صور",callback_data:"tool:photos"},{text:"📝 الوصف",callback_data:"tool:caption"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ الحالة",callback_data:"tool:status"}]]};
+const menu={inline_keyboard:[[{text:"🎬 صانع الريلز (قرآن)",callback_data:"reel:new"}],[{text:"📥 فيديو",callback_data:"tool:video"},{text:"🎵 صوت MP3",callback_data:"tool:audio"}],[{text:"🖼 الغلاف",callback_data:"tool:cover"},{text:"📦 ضغط",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 صور",callback_data:"tool:photos"},{text:"📝 الوصف",callback_data:"tool:caption"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ الحالة",callback_data:"tool:status"}]]};
 const TOOL_AR={video:"📥 تحميل فيديو",audio:"🎵 تحويل لصوت MP3",cover:"🖼 غلاف الفيديو",compress:"📦 ضغط الفيديو",gif:"🎞 تحويل GIF",webm:"🔁 تحويل WebM"};
 const MODES=["chat","link","cover","audio","gif","compress","webm","photos","photo","caption"],FREE_MODES=["cover","caption"];
 function ret(res,x,s=200){res.writeHead(s,{"content-type":"application/json;charset=utf-8","cache-control":"no-store"});return res.end(JSON.stringify(x))}
@@ -64,6 +66,76 @@ async function resume(id,user){
 }
 const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me";
 
+// ---------- reel studio wizard (state in Redis, one message edited in place for the settings) ----------
+const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["maher","ماهر المعيقلي"],["dossari","ياسر الدوسري"],["shatri","أبو بكر الشاطري"]];
+const RNAME=Object.fromEntries(RECITERS);
+const rwKey=u=>P+"rw:"+u;
+async function rwGet(u){try{const v=await cmd("GET",rwKey(u));return v?JSON.parse(v):null}catch{return null}}
+const rwSet=(u,st)=>cmd("SET",rwKey(u),JSON.stringify(st),"EX","3600");
+const rwDel=u=>cmd("DEL",rwKey(u)).catch(()=>{});
+const ar=n=>String(n).replace(/\d/g,d=>"٠١٢٣٤٥٦٧٨٩"[d]);
+async function contactLine(){try{const c=(await getCfg()).contact||"";return c?"\n\nللاشتراك كلّم "+c+" (دفع فودافون كاش).":"\n\nللاشتراك كلّم الإدارة."}catch{return ""}}
+const VERSE_HELP="📖 اكتب السورة ورقم الآية (أو مدى آيات):\n\nأمثلة:\n• الملك\n• البقرة 255\n• الرحمن 1-13\n• 2:255\n• آية الكرسي\n\nلو كتبت السورة بس هبدأ من أولها، والريل بيقف عند آخر آية كاملة جوة المدة اللي هتختارها.";
+async function reelStart(id,user){
+  if(!redisOn())return send(id,"⚠️ صانع الريلز محتاج قاعدة البيانات، ومش متاحة دلوقتي.");
+  const g=await gate(user);if(g)return deny(id,g);
+  const r=await reelState(user);
+  if(r.used>=r.plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+r.used+" من "+r.plan.daily+").\n"+planLine(r.plan)+"\n\n"+PLANS_TEXT+(await contactLine()));
+  await rwSet(user,{step:"verse"});
+  return send(id,VERSE_HELP);
+}
+function reciterKb(){const rows=[];for(let i=0;i<RECITERS.length;i+=2)rows.push(RECITERS.slice(i,i+2).map(([k,n])=>({text:"🎙 "+n,callback_data:"rr:"+k})));rows.push([{text:"✖️ إلغاء",callback_data:"rs:x"}]);return {inline_keyboard:rows}}
+function settingsView(st,plan){
+  const DUR=[10,15,20,30,60,...(plan.cap>=120?[120]:[]),...(plan.cap>=180?[180]:[])];
+  const lab=n=>(st.dur===n?"✅ ":"")+(n<60?n+"ث":n===60?"دقيقة":(n/60)+" د");
+  const rows=[DUR.slice(0,5).map(n=>({text:lab(n),callback_data:"rs:d:"+n}))];
+  if(DUR.length>5)rows.push(DUR.slice(5).map(n=>({text:lab(n),callback_data:"rs:d:"+n})));
+  rows.push([{text:(st.ar==="9:16"?"✅ ":"")+"📱 9:16 ريلز/شورتس",callback_data:"rs:a:916"},{text:(st.ar==="16:9"?"✅ ":"")+"🖥 16:9 يوتيوب",callback_data:"rs:a:169"}]);
+  rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"}]);
+  rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
+  const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n⏱ أقصى مدة: "+lab(st.dur).replace("✅ ","")+" (بيقف عند آخر آية كاملة)\n📐 المقاس: "+st.ar+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":"ملغية");
+  return {text,kb:{inline_keyboard:rows}};
+}
+async function reelText(id,user,body){
+  const st=await rwGet(user);if(!st||st.step!=="verse")return false;
+  const v=parseVerse(body);
+  if(!v){await send(id,"⚠️ مش قادر أفهم السورة أو الآية. "+VERSE_HELP);return true}
+  await rwSet(user,{step:"reciter",surah:v.surah,frm:v.frm,to:v.to});
+  await send(id,"📖 سورة "+SURAH[v.surah-1]+" · "+(v.to?("الآيات من "+ar(v.frm)+" إلى "+ar(v.to)):("من آية "+ar(v.frm)))+"\n\nاختار القارئ:",reciterKb());
+  return true;
+}
+async function reelCallback(q,d,id,user){
+  const mid=q.message?.message_id;
+  const edit=(text,kb)=>tg("editMessageText",{chat_id:id,message_id:mid,text,disable_web_page_preview:true,...(kb?{reply_markup:kb}:{})}).catch(e=>{if(!/not modified/.test(e.message))return send(id,text,kb)});
+  if(d==="reel:new")return reelStart(id,user);
+  if(d==="rs:x"){await rwDel(user);return edit("✖️ تم إلغاء الريل. تقدر تبدأ من جديد من /reel")}
+  const st=await rwGet(user);
+  if(!st||!st.surah)return send(id,"⌛ الجلسة دي انتهت. ابدأ من جديد من /reel");
+  const {plan,used}=await reelState(user);
+  if(d.startsWith("rr:")){const k=d.slice(3);if(!RNAME[k])return;Object.assign(st,{step:"settings",reciter:k,dur:Math.min(30,plan.cap),ar:"9:16",vig:true});await rwSet(user,st);const v=settingsView(st,plan);return edit(v.text,v.kb)}
+  if(!st.reciter)return;
+  if(d.startsWith("rs:d:")){const n=Number(d.slice(5));if(!(n>0&&n<=plan.cap))return;st.dur=n}
+  else if(d==="rs:a:916")st.ar="9:16";else if(d==="rs:a:169")st.ar="16:9";else if(d==="rs:v")st.vig=!st.vig;
+  else if(d==="rs:go"){
+    if((await cmd("SET",P+"lock:reel:"+user,"1","NX","EX","15"))!=="OK")return;
+    const g=await gate(user);if(g)return deny(id,g);
+    if(used>=plan.daily)return edit("⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n\n"+PLANS_TEXT+(await contactLine()));
+    if(!WORKER||!WKEY)return send(id,"⚠️ خادم المعالجة غير مربوط.");
+    await edit("⏳ جاري إرسال طلب الريل…");
+    if(!(await wake(id))){await cmd("DEL",P+"lock:reel:"+user).catch(()=>{});return send(id,"⌛ الخادم لسه بيصحى. دوس «اعمل الريل» تاني بعد دقيقة.",settingsView(st,plan).kb)}
+    const j=await wk("/reels",{chat_id:id,user_id:user,source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:Math.min(st.dur,plan.cap),cap:plan.cap,ar:st.ar,vig:!!st.vig,wm:plan.wm?"@BMEDIAHUB_BOT":""});
+    if(j.error||j.httpStatus>=400)await cmd("DEL",P+"lock:reel:"+user).catch(()=>{});
+    if(j.error)return send(id,"⚠️ خادم المعالجة مش متاح مؤقتًا. جرّب تاني.",settingsView(st,plan).kb);
+    if(j.httpStatus===409)return send(id,"⏳ عندك ريل لسه بيتعمل. استنى يوصلك وبعدين اعمل التاني.");
+    if(j.httpStatus===429)return send(id,"🚦 الطابور مليان دلوقتي. جرّب بعد كام دقيقة.",settingsView(st,plan).kb);
+    if(j.httpStatus>=400)return send(id,"⚠️ تعذر عمل الريل بالإعدادات دي.");
+    await rwDel(user);await cmd("DEL",P+"lock:reel:"+user).catch(()=>{});
+    return send(id,"✅ استلمت طلب الريل"+(j.position>1?" · ترتيبك في الطابور: "+j.position:"")+".\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقة لـ 5 دقايق).");
+  }else return;
+  await rwSet(user,st);const v=settingsView(st,plan);return edit(v.text,v.kb);
+}
+
 async function message(m,u){
   if(!m||m.chat?.type!=="private")return;
   const id=m.chat.id,body=String(m.text||"").trim(),user=m.from?.id;
@@ -75,17 +147,22 @@ async function message(m,u){
     return send(id,redisOn()?welcome(await getCfg()):"🎬 أهلاً بيك!\nابعت رابط فيديو عام.",menu);
   }
   if(body.startsWith("/terms"))return send(id,TERMS);
+  if(body.startsWith("/reel"))return reelStart(id,user);
+  if(body.startsWith("/plans"))return send(id,PLANS_TEXT+(redisOn()?await contactLine():""));
   if(body.startsWith("/me")){
     if(!redisOn())return send(id,"ℹ️ نظام الرصيد غير مفعّل حاليًا.");
     const g=await gate(user);if(g)return deny(id,g);
-    return send(id,describe(await account(user,await getCfg())));
+    const [acc,rs]=await Promise.all([account(user,await getCfg()),reelState(user)]);
+    return send(id,describe(acc)+"\n\n🎬 ريلز النهاردة: "+rs.used+" من "+(rs.plan.daily>1e6?"∞":rs.plan.daily)+"\n"+planLine(rs.plan));
   }
-  if(body.startsWith("/help"))return send(id,"📖 الأوامر:\n/start — القائمة\n/me — رصيدي\n/help — المساعدة\n/terms — الشروط\n/status — الحالة\n/tools — الأدوات\n/wake — تنشيط الخادم\n/id — رقم حسابك\n\n"+HOWTO+"\n\nابعت رابط عام من المنصات الأربع.",menu);
+  if(body.startsWith("/help"))return send(id,"📖 الأوامر:\n/start — القائمة\n/reel — صانع الريلز\n/plans — باقات الريلز\n/me — رصيدي\n/help — المساعدة\n/terms — الشروط\n/status — الحالة\n/tools — الأدوات\n/wake — تنشيط الخادم\n/id — رقم حسابك\n\n"+HOWTO+"\n\nابعت رابط عام من المنصات الأربع.",menu);
   if(body.startsWith("/tools"))return send(id,"🛠 أدوات: فيديو، MP3، غلاف، ضغط، GIF، WebM، وصف المنشور، وتحميل الصور (كلها / صورة معينة / ZIP عند الطلب).",menu);
   if(body.startsWith("/wake")){if(!WORKER||!WKEY)return send(id,"⚠️ خادم المعالجة غير مربوط.");return send(id,(await wake(id))?"✅ الخادم صاحي وجاهز. ابعت الرابط.":"⌛ الخادم لسه بيصحى، جرّب /wake تاني بعد دقيقة.")}
   if(body.startsWith("/status"))return send(id,"🟢 Vercel webhook: online\n🎬 Media worker: "+(WORKER&&WKEY?"configured":"not connected yet")+"\n🗄 Redis: "+(redisOn()?"connected":"off"));
   if(body.startsWith("/stats"))return send(id,"📊 الإحصائيات متاحة لصاحب البوت فقط.");
-  const murl=body.match(/https:\/\/[^\s<>"'()[\]]+/i);if(!murl)return send(id,"🔗 ابعت رابط فيديو عام من YouTube أو TikTok أو Instagram أو Facebook.",menu);
+  const murl=body.match(/https:\/\/[^\s<>"'()[\]]+/i);
+  if(!murl&&body&&!body.startsWith("/")&&redisOn()&&await reelText(id,user,body))return;
+  if(!murl)return send(id,"🔗 ابعت رابط فيديو عام من YouTube أو TikTok أو Instagram أو Facebook.",menu);
   const url=murl[0].replace(/[.,!?،؛]+$/,"");
   if(!getPlatform(url))return send(id,"⚠️ رابط غير مدعوم.");
   const g=await gate(user,{credit:true,pending:url});if(g)return deny(id,g);
@@ -103,6 +180,7 @@ async function callback(q){
 async function callbackWork(q,d,ack){
   const id=q.message?.chat?.id,user=q.from?.id;if(!id||!user)return;if(!allowed(user))return;
   if(d.startsWith("adm:")){if(isAdmin(user)&&redisOn())return adminCallback(d,id);return}
+  if(d==="reel:new"||d.startsWith("rr:")||d.startsWith("rs:"))return reelCallback(q,d,id,user);
   if(d==="go"||d==="terms:ok"||d==="chk"){
     if(!redisOn())return;
     // ignore rapid repeated taps (each tap used to produce another message)
@@ -143,7 +221,7 @@ async function callbackWork(q,d,ack){
 // Worker -> Vercel: report a completed delivery (charges credit once, counts outbound bandwidth, alerts at 4.5 GB).
 const BW_ALERTS=[[4.5e9,"⚠️ ترافيك Render وصل 4.5 GB من 5 GB المجانية الشهر ده. قرر: ندفع الزيادة (0.15$/GB) ولا نقلل الاستخدام؟"],[5e9,"🚨 ترافيك Render عدّى 5 GB. أي استهلاك زيادة بيتحاسب 0.15$ لكل GB (الكارت مربوط)."]];
 async function handleUsage(b){
-  const user=Number(b.user)||0,r=await usage({user,job:/^[0-9a-f]{16}$/.test(String(b.job||""))?b.job:"",kind:b.kind,bytes:b.bytes});
+  const user=Number(b.user)||0,r=await usage({user,job:/^(?:[0-9a-f]{16}|\d{5,15}-[0-9a-f]{10})$/.test(String(b.job||""))?b.job:"",kind:b.kind,bytes:b.bytes});
   if(r.bandwidth!==null){
     const prev=r.bandwidth-Math.max(0,Math.floor(Number(b.bytes)||0));
     for(const [t,msg] of BW_ALERTS)if(prev<t&&r.bandwidth>=t&&(await cmd("SET",P+"bwalert:"+monthKey()+":"+t,"1","NX","EX","3000000"))==="OK"){
