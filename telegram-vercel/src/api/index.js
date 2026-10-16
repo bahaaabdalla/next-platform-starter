@@ -135,7 +135,7 @@ async function callbackWork(q,d,ack){
       if(credit&&redisOn()){try{if(await cmd("EXISTS",P+"chg:"+p[1]))credit=false}catch{}}   // tools on an already-paid video are free
       const g=await gate(user,{credit});if(g)return deny(id,g);
       const j=await wk("/jobs/"+p[1]+"/action",{user_id:user,chat_id:id,mode:p[2],quality:p[3]});
-      return send(id,j.error?"⚠️ فشل تنفيذ الأداة.":j.httpStatus===404||j.httpStatus===410?"⌛ انتهت صلاحية الأزرار دي. ابعت الرابط من جديد.":j.httpStatus===409?"⚠️ الأداة دي مش متاحة لنوع المحتوى ده.":j.httpStatus>=400?"⚠️ تعذر تنفيذ الطلب.":(p[2]==="photos"&&p[3]==="pick")?"🔢 اختار رقم الصورة.":p[2]==="caption"?"📝 جاري إرسال الوصف.":"✅ استلمت طلبك.");
+      return send(id,j.error?"⚠️ فشل تنفيذ الأداة.":j.httpStatus===404||j.httpStatus===410?"⌛ انتهت صلاحية الأزرار دي. ابعت الرابط من جديد.":j.httpStatus===409?(j.detail==="busy"?"⏳ لسه بجهّز طلب سابق على نفس الفيديو. استنى يوصلك وبعدها اختار الأداة.":j.detail==="not ready"?"⏳ الفيديو لسه بيتفحص أو الفحص فشل. ابعت الرابط تاني لو اتأخر.":"⚠️ الأداة دي مش متاحة لنوع المحتوى ده."):j.httpStatus>=400?"⚠️ تعذر تنفيذ الطلب.":(p[2]==="photos"&&p[3]==="pick")?"🔢 اختار رقم الصورة.":p[2]==="caption"?"📝 جاري إرسال الوصف.":"✅ استلمت طلبك.");
     }
   }
 }
