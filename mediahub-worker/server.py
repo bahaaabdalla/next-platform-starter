@@ -524,11 +524,13 @@ reel_pool=ThreadPoolExecutor(max_workers=1)   # one render at a time: the free C
 REEL_QUEUE=int(os.getenv('REEL_QUEUE','4'))
 reel_q=[];reel_lock=threading.Lock()
 
-def tg_video(chat,path,caption,info):
+def tg_video(chat,path,caption,info,markup=None):
+ data={'chat_id':str(chat),'caption':caption[:1024],'supports_streaming':'true','width':str(info['width']),'height':str(info['height']),'duration':str(int(info['duration']))}
+ if markup:data['reply_markup']=json.dumps(markup,ensure_ascii=False)
  with open(path,'rb') as fh:
   with httpx.Client(timeout=httpx.Timeout(240,connect=20)) as c:
    c.post('https://api.telegram.org/bot'+os.environ['TG_BOT_TOKEN']+'/sendVideo',
-    data={'chat_id':str(chat),'caption':caption[:1024],'supports_streaming':'true','width':str(info['width']),'height':str(info['height']),'duration':str(int(info['duration']))},
+    data=data,
     files={'video':('reel.mp4',fh,'video/mp4')}).raise_for_status()
 
 TG_FILE_MAX=20*1024*1024   # Bot API getFile limit
@@ -598,14 +600,22 @@ def reel_assets(spec,work):
   except Exception as e:print('logo fetch failed',type(e).__name__,flush=True)
  return lib,logo
 
+def continue_markup(spec,info):
+ """When the reel stopped before the requested last ayah (or the surah end), offer to carry on from the next one."""
+ end=int(spec.get('to') or 0) or reels.ayah_count(int(info['surah']))
+ nxt=int(info['to'])+1
+ if nxt>end:return None
+ d='rc:%d:%d:%d:%s:%s:%d'%(info['surah'],nxt,int(spec.get('to') or 0),spec['reciter'],'169' if spec.get('ar')=='16:9' else '916',1 if spec.get('vig',True) else 0)
+ return {'inline_keyboard':[[{'text':'▶️ كمّل من آية '+str(nxt).translate(reels.AR_DIGITS),'callback_data':d}]]}
+
 def reel_job(rid,spec):
  work=DATA/'reels'/rid;job={'user':spec['user_id'],'id':rid};quran=spec.get('source')=='quran'
  try:
   t0=time.time();work.mkdir(parents=True,exist_ok=True)
-  lib,logo=reel_assets(spec,work)
+  lib,logo=reel_assets(spec,work);markup=None
   if quran:
    out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo)
-   cap=reels.caption(info)
+   cap=reels.caption(info);markup=continue_markup(spec,info)
   else:
    talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…')
    src=work/'src';src.mkdir(exist_ok=True)
@@ -622,7 +632,7 @@ def reel_job(rid,spec):
    out,info=reels.render_media(spec,work,audio_src=audio,images=images,video_src=video,library=lib,logo=logo)
    for f in src.iterdir():f.unlink(missing_ok=True)
    cap='🎬 الريل جاهز'+(' · @BMEDIAHUB_BOT' if spec.get('wm') else '')
-  tg_video(spec['chat_id'],out,cap,info)
+  tg_video(spec['chat_id'],out,cap,info,markup)
   print('reel ok',rid,spec.get('source'),'dur',round(info['duration'],1),'render',info['render_s'],'total',round(time.time()-t0,1),'bytes',out.stat().st_size,flush=True)
   report(job,'reel',out.stat().st_size)
  except Exception as e:
