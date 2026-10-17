@@ -10,7 +10,7 @@ export const isAdmin=id=>ADMINS().includes(String(id));
 export async function getCfg(){
   return parseCfg(obj(await cmd("HGETALL",P+"cfg")));
 }
-const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||""});
+const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0)});
 // Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
 export async function load(id){
   const d=today();
@@ -85,18 +85,27 @@ export async function claimBonus(id,c){
   return {ok:false,reason:"nosub",free};
 }
 // ---------- reel studio plans ----------
-// Plans are activated by the admin (/plan ID 50|100 [days]) after a manual payment; they expire on their own.
-export const PLANS={"0":{name:"مجاني",daily:1,cap:60,wm:true},"50":{name:"باقة 50 جنيه",daily:2,cap:180,wm:false},"100":{name:"باقة 100 جنيه",daily:6,cap:180,wm:false}};
-export function reelPlan(id,user){
-  let k=String(user.plan||"0");if(k!=="0"&&!(Number(user.pexp)>Date.now()))k="0";
-  const p={...(PLANS[k]||PLANS["0"]),key:k,exp:k!=="0"?Number(user.pexp):0};
+// One paid plan, activated by the admin (/plan ID pro [days]) after a manual payment; it expires on its own.
+// Users still on the old 50/100 keys are read as "pro" with the same expiry.
+export const PLANS={"0":{name:"مجاني",daily:1,cap:60,wm:true},"pro":{name:"الباقة المميزة",daily:10,cap:180,wm:false}};
+export const planKey=k=>{k=String(k||"0").toLowerCase();return k==="50"||k==="100"?"pro":PLANS[k]?k:""};
+// cfg (optional) carries the launch window: free reels have no watermark until cfg.launch.
+export function reelPlan(id,user,cfg){
+  let k=planKey(user.plan)||"0";if(k!=="0"&&!(Number(user.pexp)>Date.now()))k="0";
+  const p={...PLANS[k],key:k,exp:k!=="0"?Number(user.pexp):0};
   if(user.nowm==="1")p.wm=false;
+  if(k==="0"&&cfg&&cfg.launch>Date.now()){p.wm=false;p.launch=cfg.launch}
   if(isAdmin(id)){p.daily=1e9;p.cap=180}
   return p;
 }
 export async function reelState(id){
-  const [u,used]=await pipe([["HGETALL",P+"u:"+id],["GET",P+"reel:"+id+":"+today()]]);
-  const user=obj(u);return {user,plan:reelPlan(id,user),used:num(used,0)};
+  const d=today();
+  const [u,used,cfgRaw,fu]=await pipe([["HGETALL",P+"u:"+id],["GET",P+"reel:"+id+":"+d],["HGETALL",P+"cfg"],["GET",P+"rlf:"+d]]);
+  const user=obj(u),c=parseCfg(obj(cfgRaw)),plan=reelPlan(id,user,c);
+  // free reels share a global daily cap (0 = no cap) so a free rush never slows the paid queue down
+  const freeFull=plan.key==="0"&&!isAdmin(id)&&c.freecap>0&&num(fu,0)>=c.freecap;
+  plan.freeFull=freeFull;
+  return {user,plan,used:num(used,0),freeFull};
 }
 // Worker usage report: charge once per video job, once per photo action; always count bandwidth.
 export async function usage({user,job,kind,bytes}){
@@ -107,7 +116,9 @@ export async function usage({user,job,kind,bytes}){
   if(kind==="reel"&&user&&job){
     if((await cmd("SET",P+"chg:"+job,"1","NX","EX","172800"))==="OK"){
       const k=P+"reel:"+user+":"+d;
-      await pipe([["INCR",k],["EXPIRE",k,"259200"],["INCR",P+"rl:"+d],["EXPIRE",P+"rl:"+d,"259200"],["INCR",P+"rlm:"+m],["EXPIRE",P+"rlm:"+m,"5184000"],["SADD",P+"act:"+d,String(user)],["EXPIRE",P+"act:"+d,"259200"]]);
+      const free=reelPlan(user,obj(await cmd("HGETALL",P+"u:"+user))).key==="0"&&!isAdmin(user);
+      await pipe([["INCR",k],["EXPIRE",k,"259200"],["INCR",P+"rl:"+d],["EXPIRE",P+"rl:"+d,"259200"],["INCR",P+"rlm:"+m],["EXPIRE",P+"rlm:"+m,"5184000"],["SADD",P+"act:"+d,String(user)],["EXPIRE",P+"act:"+d,"259200"],
+        ...(free?[["INCR",P+"rlf:"+d],["EXPIRE",P+"rlf:"+d,"259200"]]:[])]);
       charged=1;
     }
     return {charged,bandwidth:newBw};

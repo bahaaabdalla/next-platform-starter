@@ -30,9 +30,8 @@ export const HOWTO=`📊 نظام الاستخدام:
 • لو خلصت حصتك: الاشتراك في قناة إضافية بيدّيك +5 تحميلات لباقي اليوم (مرة واحدة يوميًا).`;
 export const PLANS_TEXT=`🎬 باقات صانع الريلز
 
-🆓 المجاني: ريل واحد يوميًا لحد دقيقة، بعلامة مائية.
-💎 باقة 50 جنيه/شهر: 2 ريل يوميًا، لحد 3 دقايق، من غير علامة مائية، وكل الإعدادات.
-👑 باقة 100 جنيه/شهر: 6 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية، وكل الإعدادات.`;
+🆓 المجاني: ريل واحد يوميًا لحد دقيقة.
+💎 الباقة المميزة — 50 جنيه/شهر (سعر الإطلاق): 10 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية، أولوية في الطابور، وكل الإعدادات.`;
 export const COMMANDS=[
   {command:"start",description:"البداية والقائمة"},
   {command:"reel",description:"صانع الريلز (قرآن، صوتك، صورك)"},
@@ -58,7 +57,9 @@ export const ADMIN_COMMANDS=[...COMMANDS,
   {command:"addchannel",description:"/addchannel @name"},
   {command:"delchannel",description:"/delchannel @name"},
   {command:"setmain",description:"القناة الإجبارية: /setmain @name"},
-  {command:"plan",description:"باقة ريلز: /plan ID 0|50|100 [أيام]"},
+  {command:"plan",description:"باقة ريلز: /plan ID pro|0 [أيام]"},
+  {command:"launch",description:"فترة الإطلاق: /launch أيام|off"},
+  {command:"freecap",description:"حد الريلز المجانية اليومي: /freecap N"},
   {command:"nowm",description:"العلامة المائية: /nowm ID on|off"},
   {command:"contact",description:"قناة/حساب الاشتراك: /contact"},
   {command:"bg",description:"إضافة خلفيات للريلز"},
