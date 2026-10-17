@@ -209,6 +209,7 @@ function quranView(st,plan){
   const est=st.est||null,all=est&&st.to&&est.length===st.to-st.frm+1?est.reduce((x,y)=>x+y,0):null;
   if(st.to&&est)rows.push([{text:(st.fit?"✅ ":"")+"📏 على قد الآيات"+(all?" (~"+secs(Math.ceil(Math.min(all,plan.cap)))+")":""),callback_data:"rs:f"}]);
   rows.push(sizeRow(st,"rs:"));
+  rows.push([{text:"🖼 الخلفيات: "+(st.bgsrc==="lib"?"من المكتبة":"تلقائية"),callback_data:"rs:b"}]);
   rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"},{text:"✍️ التوقيع: "+(st.sig?st.sig.slice(0,14):"مفيش"),callback_data:"rs:g"}]);
   rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
   const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
@@ -224,7 +225,7 @@ function quranView(st,plan){
     }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
     if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
   }
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(st.bgsrc==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":"تلقائية من السيرفر")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
@@ -245,6 +246,7 @@ function mediaView(st,plan,nimg){
   return {text,kb:{inline_keyboard:rows}};
 }
 
+async function libCount(ar){try{return Number(await cmd("SCARD",P+"bgs:"+(ar==="16:9"?"169":"916")))||0}catch{return 0}}
 async function libraryFor(st){
   const o=st.ar==="16:9"?"169":"916";
   try{const [c,bgs]=await pipe([["HGET",P+"cfg","logo"],["SRANDMEMBER",P+"bgs:"+o,"6"]]);return {logo:c||"",bgs:bgs||[]}}catch{return {logo:"",bgs:[]}}
@@ -305,6 +307,7 @@ export async function reelCallback(q,d,id,user){
   if(d.startsWith("rr:")){
     const k=d.slice(3);if(!RNAME[k])return;
     Object.assign(st,{step:"settings",reciter:k,dur:Math.min(30,plan.cap),ar:st.ar||"9:16",vig:st.vig??true,fit:false,sig:await sigGet(user)});
+    st.libn=await libCount(st.ar);if(!st.bgsrc)st.bgsrc=st.libn?"lib":"auto";
     st.est=await estimate(st,plan.cap).catch(()=>null);
     if(st.to&&st.est&&st.est.length===st.to-st.frm+1&&st.est.reduce((x,y)=>x+y,0)>st.dur)st.fit=true;   // default: read every requested ayah
     await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
@@ -315,9 +318,14 @@ export async function reelCallback(q,d,id,user){
   else if(d==="rs:g"){st.await="sig";st.mid=mid;await rwSet(user,st);return edit(SIG_HELP,sigKb)}
   else if(d==="rs:g0"){st.sig="";delete st.await;await cmd("DEL",sigKey(user)).catch(()=>{})}
   else if(d==="rs:gb"){delete st.await}
-  else if(d==="rs:a:916")st.ar="9:16";else if(d==="rs:a:169")st.ar="16:9";else if(d==="rs:v")st.vig=!st.vig;
+  else if(d==="rs:a:916"||d==="rs:a:169"){st.ar=d==="rs:a:916"?"9:16":"16:9";st.libn=await libCount(st.ar);if(!st.libn)st.bgsrc="auto"}
+  else if(d==="rs:v")st.vig=!st.vig;
+  else if(d==="rs:b"){
+    if(st.bgsrc!=="lib"){st.libn=await libCount(st.ar);if(!st.libn)return send(id,"🖼 مكتبة الخلفيات "+(st.ar==="16:9"?"العرضية":"الطولية")+" لسه فاضية، فالريل هيستخدم خلفيات تلقائية.");st.bgsrc="lib"}
+    else st.bgsrc="auto";
+  }
   else if(d==="rs:go"){
-    const lib=await libraryFor(st);
+    const lib=await libraryFor(st);if(st.bgsrc==="auto")lib.bgs=[];
     return submit(id,user,plan,used,{source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,sig:st.sig||"",logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
   }else return;
   await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
@@ -334,6 +342,7 @@ async function reelContinue(id,user,d){
   const st={step:"settings",surah,frm,to:last||null,reciter:k,dur:Math.min(30,plan.cap),ar:o==="169"?"16:9":"9:16",vig:vg!=="0",fit:false,sig:await sigGet(user)};
   st.est=await estimate(st,plan.cap).catch(()=>null);
   if(st.to&&st.est&&st.est.length===st.to-st.frm+1&&st.est.reduce((x,y)=>x+y,0)>st.dur)st.fit=true;
+  st.libn=await libCount(st.ar);st.bgsrc=st.libn?"lib":"auto";
   await rwSet(user,st);const v=quranView(st,plan);return send(id,v.text,v.kb);
 }
 export const isReelCallback=d=>d==="reel:new"||/^(rr|rs|rk|rm|ms|rc):/.test(d);
