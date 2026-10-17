@@ -13,6 +13,9 @@ HERE=Path(__file__).resolve().parent
 DATA_FILE=HERE/'data'/'quran.json'
 FONT=os.getenv('QURAN_FONT',str(HERE/'fonts'/'AmiriQuran-Regular.ttf'))
 UI_FONT=os.getenv('UI_FONT',str(HERE/'fonts'/'Amiri-Regular.ttf'))
+TITLE_FONT=str(HERE/'fonts'/'ArefRuqaa-Bold.ttf')            # surah name on top
+SIG_AR_FONT=str(HERE/'fonts'/'ArefRuqaa-Regular.ttf')        # page signature, Arabic
+SIG_LAT_FONT=str(HERE/'fonts'/'GreatVibes-Regular.ttf')      # page signature, Latin script
 EVERYAYAH='https://everyayah.com/data/'
 FPS=25;XF=0.8   # crossfade seconds between backgrounds
 SIZES={'9:16':(720,1280),'16:9':(1280,720)}
@@ -74,6 +77,40 @@ def fetch_ayah(cache,folder,s,a):
  tmp=f.with_suffix('.part');tmp.write_bytes(r.content);tmp.replace(f)
  return f
 
+GAP=0.45;LEAD=0.4;TAIL=0.8   # pause between ayat, silence before the first and after the last
+def clean_ayah(src,dest):
+ """One ayah as plain PCM: edge silence trimmed and 15/40 ms fades, so joining ayat leaves no click or blip.
+ (Concatenating the MP3s directly decodes each file's first frame without its bit reservoir, which can blip.)"""
+ af=('silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08,areverse,'
+     'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.12,afade=t=in:d=0.04,areverse,afade=t=in:d=0.015')
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(src),'-af',af,'-ac','2','-ar','44100','-c:a','pcm_s16le',str(dest)],120)
+ d=duration(dest)
+ if d<0.3:   # trimming ate it (very quiet file): fall back to the untouched recitation
+  run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(src),'-ac','2','-ar','44100','-c:a','pcm_s16le',str(dest)],120);d=duration(dest)
+ return dest,d
+
+def silence(sec,dest):
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-f','lavfi','-i','anullsrc=r=44100:cl=stereo','-t','%.3f'%sec,'-c:a','pcm_s16le',str(dest)],30)
+ return dest
+
+def recitation(ayat,work,hardcap):
+ """Join cleaned ayat with natural pauses. Returns (audio.m4a, total seconds, [(ayah, start, end_of_its_screen_time)])."""
+ parts=[silence(LEAD,work/'lead.wav')];gap=silence(GAP,work/'gap.wav');tail=silence(TAIL,work/'tail.wav')
+ t=LEAD;spans=[]
+ for k,(num,f,_) in enumerate(ayat):
+  w,d=clean_ayah(f,work/('a%03d.wav'%k))
+  if k:parts.append(gap);t+=GAP
+  parts.append(w);spans.append([num,t,t+d]);t+=d
+ parts.append(tail);total=min(t+TAIL,LEAD+hardcap+TAIL)
+ for i in range(len(spans)-1):spans[i][2]=spans[i+1][1]   # a verse stays up through the pause until the next one starts
+ spans[-1][2]=total
+ lst=work/'list.txt';lst.write_text(''.join("file '%s'\n"%str(p).replace("'","'\\''") for p in parts))
+ audio=work/'audio.m4a'
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-f','concat','-safe','0','-i',str(lst),
+      '-af','afade=t=out:st=%.3f:d=0.6'%max(0,total-0.6),'-t','%.3f'%total,'-c:a','aac','-b:a','160k',str(audio)],180)
+ for p in work.glob('*.wav'):p.unlink(missing_ok=True)
+ return audio,total,[tuple(x) for x in spans if x[1]<total-0.05]
+
 def trim_cache(cache,limit=400*1024*1024):
  try:
   files=sorted((p for p in cache.rglob('*.mp3')),key=lambda p:p.stat().st_atime)
@@ -108,8 +145,9 @@ def wrap(draw,text,f,maxw):
  return lines
 
 def layout(W,H):
- if W<H:return dict(size=50,maxw=W-100,lh=100,maxlines=7,cy=int(H*0.47))
- return dict(size=44,maxw=W-200,lh=86,maxlines=4,cy=int(H*0.5))
+ # Reels/Shorts safe zone: clear of the top bar, the bottom ~22% (account name + caption) and the right-side buttons.
+ if W<H:return dict(size=50,maxw=W-150,lh=100,maxlines=6,cy=int(H*0.45))
+ return dict(size=44,maxw=W-260,lh=86,maxlines=4,cy=int(H*0.47))
 
 def ayah_pages(text,W,H):
  """Split one ayah into screen pages (lists of lines)."""
@@ -134,16 +172,32 @@ def text_png(lines,W,H,dest):
  full.crop(box).save(dest)
  return dest,box[0],box[1]   # only the text box is overlaid: blending a full frame per page was a large part of the cost
 
-def chrome_png(W,H,label,wm,dest,vignette=False,logo=None):
- """Static layer: optional label on top, watermark (logo image if provided, else text) at the bottom, optional vignette."""
+def clean_sig(t):
+ t=' '.join(''.join(c for c in str(t or '') if c.isprintable() and not '\u200b'<=c<='\u200f' and not '\u202a'<=c<='\u202e' and not '\u2066'<=c<='\u2069').split())
+ return t[:30] or None
+
+def is_arabic(t):return any('\u0600'<=c<='\u06ff' or '\u0750'<=c<='\u077f' or '\ufb50'<=c<='\ufdff' or '\ufe70'<=c<='\ufeff' for c in t)
+
+def chrome_png(W,H,label,wm,dest,vignette=False,logo=None,title=None,sig=None):
+ """Static layer: surah title (or a small label) on top, optional page signature under the verses, watermark
+ (logo image if provided, else text) at the bottom, optional vignette."""
  from PIL import Image,ImageDraw,ImageFilter
  img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
  if vignette:sh=vignette_layer(W,H)
  d=ImageDraw.Draw(img);ds=ImageDraw.Draw(sh)
- if label:
+ if title:
+  tf=font(TITLE_FONT,62 if W<H else 50);y=int(H*(0.10 if W<H else 0.07))
+  for dd,fill,off in ((ds,(0,0,0,230),3),(d,(255,255,255,245),0)):
+   dd.text((W//2+off,y+off),title,font=tf,fill=fill,anchor='mt',direction='rtl',language='ar')
+ elif label:
   lf=font(UI_FONT,34 if W<H else 30);y=int(H*0.07)
   for dd,fill,off in ((ds,(0,0,0,200),2),(d,(255,255,255,220),0)):
    dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar')
+ if sig:
+  ar=is_arabic(sig);sf=font(SIG_AR_FONT if ar else SIG_LAT_FONT,(46 if ar else 50) if W<H else (38 if ar else 42))
+  y=int(H*(0.745 if W<H else 0.835));kw=dict(direction='rtl',language='ar') if ar else {}
+  for dd,fill,off in ((ds,(0,0,0,220),2),(d,(255,255,255,235),0)):
+   dd.text((W//2+off,y+off),sig,font=sf,fill=fill,anchor='mm',**kw)
  if wm:
   placed=False
   if logo and Path(logo).exists():
@@ -206,6 +260,22 @@ def plan_segments(total,n_bg):
  n=max(1,n_bg);seg=(total+XF*(n-1))/n
  return [seg]*n
 
+def segments_for_cuts(cuts,total):
+ """Still durations so each crossfade is centred on a cut time."""
+ pts=[0.0]+list(cuts)+[total];segs=[]
+ for i in range(len(pts)-1):segs.append(pts[i+1]-pts[i]+(XF/2 if i>0 else 0)+(XF/2 if i<len(pts)-2 else 0))
+ return segs
+
+def scene_cuts(spans,total,minlen=5.0,maxlen=10.0):
+ """Background changes land in the pause before an ayah (never mid-verse); a long ayah gets evenly split scenes."""
+ cuts=[];last=0.0
+ bounds=[max(0.0,t0-GAP/2) for _,t0,_ in spans[1:]]+[total]
+ for b in bounds:
+  while b-last>maxlen+minlen:   # one long stretch: split it evenly
+   n=math.ceil((b-last)/maxlen);step=(b-last)/n;last+=step;cuts.append(last)
+  if b<total and b-last>=minlen and total-b>=minlen*0.6:cuts.append(b);last=b
+ return cuts
+
 def fit_cover(src,W,H,dest,scale=1.18):
  """Any photo -> exactly (W,H)*scale, centre-cropped, EXIF-rotated. Big phone photos are shrunk here, not in FFmpeg."""
  from PIL import Image,ImageOps
@@ -216,9 +286,9 @@ def fit_cover(src,W,H,dest,scale=1.18):
   l,t=(im.width-BW)//2,(im.height-BH)//2;im.crop((l,t,l+BW,t+BH)).save(dest,quality=90)
  return dest
 
-def stills_track(W,H,stills,total,dest,move=True):
+def stills_track(W,H,stills,total,dest,move=True,segs=None):
  """Pass 1: slow pans over the stills with crossfades -> silent mezzanine video."""
- n=len(stills);segs=plan_segments(total,n);args=list(FF);fl=[]
+ n=len(stills);segs=segs or plan_segments(total,n);args=list(FF);fl=[]
  for b,sg in zip(stills,segs):args+=['-loop','1','-framerate','1','-t','%.3f'%(sg+1),'-i',str(b)]
  for i,sg in enumerate(segs):
   dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][i%4] if move else (0,0)
@@ -277,29 +347,24 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
  work.mkdir(parents=True,exist_ok=True)
  ayat,total=pick_ayat(cache,folder,s,a,to,maxdur,hardcap)
  if on_stage:on_stage('render')
- # audio: short lead-in, recitation, fade out at the end
- lst=work/'list.txt';lst.write_text(''.join("file '%s'\n"%str(f).replace("'","'\\''") for _,f,_ in ayat))
- lead=0.4;total_v=total+lead+0.6
- audio=work/'audio.m4a'
- run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-f','concat','-safe','0','-i',str(lst),
-      '-af','adelay=%d:all=1,apad=pad_dur=1,afade=t=out:st=%.3f:d=0.6'%(int(lead*1000),max(0,total_v-0.6)),
-      '-t','%.3f'%total_v,'-c:a','aac','-b:a','128k',str(audio)],120)
- # verse pages timed to their recitation
- pages=[];t=lead;k=0
- for num,f,d in ayat:
+ audio,total_v,spans=recitation(ayat,work,hardcap)
+ # verse pages timed to their recitation (each ayah's pages share its spoken time; the last one holds through the pause)
+ pages=[];k=0
+ for num,t0,t1 in spans:
   text=ayah_text(s,num).translate(TANWEEN)+' ﴿'+str(num).translate(AR_DIGITS)+'﴾'
   pg=ayah_pages(text,W,H);weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
-  for p,wt in zip(pg,weights):
-   dur=d*wt/tot
-   if t<total_v-0.05:pages.append([text_png(p,W,H,work/('p%03d.png'%k)),t,min(t+dur,total_v)]);k+=1
-   t+=dur
- if pages:pages[-1][2]=total_v   # keep the last page up through the fade-out
+  t=t0
+  for i,(p,wt) in enumerate(zip(pg,weights)):
+   end=t1 if i==len(pg)-1 else t+(t1-t0)*wt/tot
+   pages.append([text_png(p,W,H,work/('p%03d.png'%k)),t,min(end,total_v)]);k+=1;t=end
+ ayat=[a for a in ayat if any(a[0]==x[0] for x in spans)]
  last=ayat[-1][0]
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))
- chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo)
+ chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo,title='سورة '+surah_name(s),sig=clean_sig(spec.get('sig')))
  t0=time.time()
- bgs=backgrounds(W,H,work,max(1,min(8,math.ceil(total_v/7))),library)
- track=stills_track(W,H,bgs,total_v,work/'track.mp4')
+ cuts=scene_cuts(spans,total_v)[:11]
+ bgs=backgrounds(W,H,work,len(cuts)+1,library)
+ track=stills_track(W,H,bgs,total_v,work/'track.mp4',segs=segments_for_cuts(cuts,total_v))
  for b in bgs:Path(b).unlink(missing_ok=True)
  out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4')
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),

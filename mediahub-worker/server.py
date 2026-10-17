@@ -647,7 +647,7 @@ class ReelReq(BaseModel):
  chat_id:int;user_id:int;source:str='quran'
  surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
  audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
- cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[]
+ cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str=''
 
 FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
 @app.post('/reels')
@@ -655,7 +655,7 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  auth(x_worker_secret)
  if p.chat_id!=p.user_id or p.chat_id<=0 or p.source not in ('quran','media') or p.ar not in reels.SIZES:raise HTTPException(422,'invalid input')
  spec=p.model_dump()
- spec['cap']=max(5,min(float(spec['cap']),600));spec['wm']=str(spec['wm'])[:40]
+ spec['cap']=max(5,min(float(spec['cap']),600));spec['wm']=str(spec['wm'])[:40];spec['sig']=reels.clean_sig(spec['sig']) or ''
  spec['bgs']=[x for x in spec['bgs'] if FID.match(x)][:8]
  if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
  if p.source=='quran':
