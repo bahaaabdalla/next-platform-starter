@@ -19,6 +19,9 @@ SIG_LAT_FONT=str(HERE/'fonts'/'GreatVibes-Regular.ttf')      # page signature, L
 EVERYAYAH='https://everyayah.com/data/'
 FPS=25;XF=0.8   # crossfade seconds between backgrounds
 SIZES={'9:16':(720,1280),'16:9':(1280,720)}
+# Full-surah recordings with per-ayah timestamps (quran.com / quranicaudio): one continuous cut, no joins at all.
+QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4}
+QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
 RECITERS={   # key -> (Arabic name, everyayah folder)
  'afasy':('مشاري راشد العفاسي','Alafasy_128kbps'),
  'basit':('عبد الباسط عبد الصمد','Abdul_Basit_Murattal_192kbps'),
@@ -77,12 +80,12 @@ def fetch_ayah(cache,folder,s,a):
  tmp=f.with_suffix('.part');tmp.write_bytes(r.content);tmp.replace(f)
  return f
 
-GAP=0.45;LEAD=0.4;TAIL=0.8   # pause between ayat, silence before the first and after the last
+GAP=0.0;LEAD=0.4;TAIL=0.8   # no added pause between ayat (only the reciter's own breath), silence before/after
 def clean_ayah(src,dest):
  """One ayah as plain PCM: edge silence trimmed and 15/40 ms fades, so joining ayat leaves no click or blip.
  (Concatenating the MP3s directly decodes each file's first frame without its bit reservoir, which can blip.)"""
  af=('silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08,areverse,'
-     'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.12,afade=t=in:d=0.04,areverse,afade=t=in:d=0.015')
+     'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.12,afade=t=in:d=0.02,areverse,afade=t=in:d=0.01')
  run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(src),'-af',af,'-ac','2','-ar','44100','-c:a','pcm_s16le',str(dest)],120)
  d=duration(dest)
  if d<0.3:   # trimming ate it (very quiet file): fall back to the untouched recitation
@@ -99,7 +102,7 @@ def recitation(ayat,work,hardcap):
  t=LEAD;spans=[]
  for k,(num,f,_) in enumerate(ayat):
   w,d=clean_ayah(f,work/('a%03d.wav'%k))
-  if k:parts.append(gap);t+=GAP
+  if k and GAP>0:parts.append(gap);t+=GAP
   parts.append(w);spans.append([num,t,t+d]);t+=d
  parts.append(tail);total=min(t+TAIL,LEAD+hardcap+TAIL)
  for i in range(len(spans)-1):spans[i][2]=spans[i+1][1]   # a verse stays up through the pause until the next one starts
@@ -110,6 +113,57 @@ def recitation(ayat,work,hardcap):
       '-af','afade=t=out:st=%.3f:d=0.6'%max(0,total-0.6),'-t','%.3f'%total,'-c:a','aac','-b:a','160k',str(audio)],180)
  for p in work.glob('*.wav'):p.unlink(missing_ok=True)
  return audio,total,[tuple(x) for x in spans if x[1]<total-0.05]
+
+def qdc_chapter(cache,key,s):
+ """(surah mp3 path, {ayah: (from_ms, to_ms)}) for reciters with full-surah recordings, else None."""
+ if key not in QDC:return None
+ d=cache/('qdc_%s'%key);d.mkdir(parents=True,exist_ok=True)
+ meta=d/('%03d.json'%s);mp3=d/('%03d.mp3'%s)
+ if not meta.exists():
+  r=httpx.get(QDC_API%(QDC[key],s),timeout=httpx.Timeout(20,connect=10),follow_redirects=True);r.raise_for_status()
+  af=r.json().get('audio_file') or {}
+  ts={int(t['verse_key'].split(':')[1]):(int(t['timestamp_from']),int(t['timestamp_to']),int((t.get('segments') or [[0,t['timestamp_from']]])[0][1])) for t in af.get('timestamps') or []}
+  if not af.get('audio_url') or not ts:raise RuntimeError('no timings')
+  meta.write_text(json.dumps({'url':af['audio_url'],'ts':ts}))
+ m=json.loads(meta.read_text());ts={int(k):v for k,v in m['ts'].items()}
+ if not mp3.exists() or mp3.stat().st_size<10000:
+  tmp=mp3.with_suffix('.part')
+  with httpx.stream('GET',m['url'],timeout=httpx.Timeout(60,connect=15),follow_redirects=True) as r:
+   r.raise_for_status();n=0
+   with open(tmp,'wb') as fh:
+    for chunk in r.iter_bytes(1<<16):
+     n+=len(chunk)
+     if n>200*1024*1024:raise RuntimeError('surah file too big')
+     fh.write(chunk)
+  tmp.replace(mp3)
+ os.utime(mp3)
+ return mp3,ts
+
+def continuous_recitation(mp3,ts,a,to,maxdur,hardcap,work):
+ """One uninterrupted cut of the real recording from ayah a. Returns (audio, total, spans) like recitation()."""
+ picked=[];start=None;last_end=None
+ for i in range(a,to+1):
+  if i not in ts:break
+  f,t,w=ts[i]
+  begin=(0 if i==1 else max(f,w-250)) if start is None else None   # ayah 1 keeps the opening basmala
+  st=begin if start is None else start
+  if picked and (t-st)/1000>maxdur:break
+  if start is None:start=st
+  picked.append((i,f,t));last_end=t
+  if (t-start)/1000>=maxdur:break
+ if not picked:raise RuntimeError('no timings for ayah')
+ cut=min((last_end-start)/1000,hardcap)
+ total=LEAD+cut+TAIL
+ audio=work/'audio.m4a'
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-ss','%.3f'%(start/1000),'-t','%.3f'%cut,'-i',str(mp3),
+      '-af','afade=t=in:d=0.03,adelay=%d:all=1,apad=pad_dur=%.2f,afade=t=out:st=%.3f:d=0.6'%(int(LEAD*1000),TAIL,max(0,total-0.6)),
+      '-t','%.3f'%total,'-ac','2','-ar','44100','-c:a','aac','-b:a','160k',str(audio)],180)
+ spans=[];off=LEAD-start/1000
+ for k,(i,f,t) in enumerate(picked):
+  t0=LEAD if k==0 else f/1000+off
+  t1=picked[k+1][1]/1000+off if k+1<len(picked) else total
+  if t0<total-0.05:spans.append((i,t0,min(t1,total)))
+ return audio,total,spans,[(i,None,None) for i,_,_ in picked]
 
 def trim_cache(cache,limit=400*1024*1024):
  try:
@@ -286,14 +340,31 @@ def fit_cover(src,W,H,dest,scale=1.18):
   l,t=(im.width-BW)//2,(im.height-BH)//2;im.crop((l,t,l+BW,t+BH)).save(dest,quality=90)
  return dest
 
-def stills_track(W,H,stills,total,dest,move=True,segs=None):
+def cycle_track(W,H,stills,total,every,dest,move=True):
+ """Backgrounds that change every `every` seconds, cycling through the stills: one seamless loop unit
+ (b0..bK-1 crossfading back into b0) rendered once, then looped to the reel length - light on memory."""
+ k=len(stills)
+ if k<=1 or every<=0 or total<=every+XF:
+  return stills_track(W,H,stills[:1],total,dest,move)
+ raw=Path(str(dest)+'.raw.mp4');unit=Path(str(dest)+'.unit.mp4')
+ # chain b0..bK-1,b0' ; b0' pans exactly like b0, so the frame at XF into b0' equals the frame at XF into b0
+ seq=list(stills)+[stills[0]];segs=[every+XF]*k+[XF+0.2];pan=[every+XF]*(k+1)
+ stills_track(W,H,seq,k*every+XF+0.12,raw,move,segs=segs,pan=pan,dirs=list(range(k))+[0])
+ run(list(FF)+['-ss','%.3f'%XF,'-i',str(raw),'-t','%.3f'%(k*every),'-an']+x264(16,'ultrafast')+[str(unit)],300)
+ raw.unlink(missing_ok=True)
+ run(list(FF)+['-stream_loop','-1','-i',str(unit),'-t','%.3f'%total,'-c','copy',str(dest)],300)
+ unit.unlink(missing_ok=True)
+ return dest
+
+def stills_track(W,H,stills,total,dest,move=True,segs=None,pan=None,dirs=None):
  """Pass 1: slow pans over the stills with crossfades -> silent mezzanine video."""
  n=len(stills);segs=segs or plan_segments(total,n);args=list(FF);fl=[]
  for b,sg in zip(stills,segs):args+=['-loop','1','-framerate','1','-t','%.3f'%(sg+1),'-i',str(b)]
  for i,sg in enumerate(segs):
-  dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][i%4] if move else (0,0)
-  x='(iw-ow)/2' if dx==0 else ('(iw-ow)*t/%.3f'%sg if dx>0 else '(iw-ow)*(1-t/%.3f)'%sg)
-  y='(ih-oh)/2' if dy==0 else ('(ih-oh)*t/%.3f'%sg if dy>0 else '(ih-oh)*(1-t/%.3f)'%sg)
+  dx,dy=[(1,0),(-1,0),(0,1),(0,-1)][(dirs[i] if dirs else i)%4] if move else (0,0)
+  pl=pan[i] if pan else sg
+  x='(iw-ow)/2' if dx==0 else ('(iw-ow)*t/%.3f'%pl if dx>0 else '(iw-ow)*(1-t/%.3f)'%pl)
+  y='(ih-oh)/2' if dy==0 else ('(ih-oh)*t/%.3f'%pl if dy>0 else '(ih-oh)*(1-t/%.3f)'%pl)
   # trailing fps: FFmpeg 7 xfade needs a declared constant rate
   fl.append('[%d:v]fps=%d,trim=duration=%.3f,setpts=PTS-STARTPTS,crop=%d:%d:%s:%s,setsar=1,format=yuv420p,fps=%d[b%d]'%(i,FPS,sg,W,H,x,y,FPS,i))
  cur='b0';off=0.0
@@ -345,9 +416,16 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
  hardcap=float(spec.get('cap',60));maxdur=min(float(spec.get('maxdur',30)),hardcap)
  name,folder=RECITERS[spec['reciter']]
  work.mkdir(parents=True,exist_ok=True)
- ayat,total=pick_ayat(cache,folder,s,a,to,maxdur,hardcap)
- if on_stage:on_stage('render')
- audio,total_v,spans=recitation(ayat,work,hardcap)
+ src=None
+ try:src=qdc_chapter(cache,spec['reciter'],s)
+ except Exception as e:print('qdc fallback',spec['reciter'],s,type(e).__name__,str(e)[:120],flush=True)
+ if src:
+  if on_stage:on_stage('render')
+  audio,total_v,spans,ayat=continuous_recitation(src[0],src[1],a,to,maxdur,hardcap,work)
+ else:   # reciters without a full-surah recording: per-ayah files joined gaplessly
+  ayat,total=pick_ayat(cache,folder,s,a,to,maxdur,hardcap)
+  if on_stage:on_stage('render')
+  audio,total_v,spans=recitation(ayat,work,hardcap)
  # verse pages timed to their recitation (each ayah's pages share its spoken time; the last one holds through the pause)
  pages=[];k=0
  for num,t0,t1 in spans:
@@ -362,9 +440,16 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))
  chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo,title='سورة '+surah_name(s),sig=clean_sig(spec.get('sig')))
  t0=time.time()
- cuts=scene_cuts(spans,total_v)[:11]
- bgs=backgrounds(W,H,work,len(cuts)+1,library)
- track=stills_track(W,H,bgs,total_v,work/'track.mp4',segs=segments_for_cuts(cuts,total_v))
+ mode=spec.get('bgmode') or 'every'
+ if mode=='ayah':
+  cuts=scene_cuts(spans,total_v)[:11]
+  bgs=backgrounds(W,H,work,len(cuts)+1,library)
+  track=stills_track(W,H,bgs,total_v,work/'track.mp4',segs=segments_for_cuts(cuts,total_v))
+ else:
+  every=0 if mode=='static' else max(2.0,min(float(spec.get('bgsec') or 5),30.0))
+  n=1 if mode=='static' else max(2,min(int(spec.get('bgn') or 4),8))
+  bgs=backgrounds(W,H,work,n,library)
+  track=cycle_track(W,H,bgs,total_v,every,work/'track.mp4')
  for b in bgs:Path(b).unlink(missing_ok=True)
  out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4')
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),
