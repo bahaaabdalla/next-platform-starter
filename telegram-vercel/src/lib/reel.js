@@ -210,6 +210,10 @@ function quranView(st,plan){
   if(st.to&&est)rows.push([{text:(st.fit?"✅ ":"")+"📏 على قد الآيات"+(all?" (~"+secs(Math.ceil(Math.min(all,plan.cap)))+")":""),callback_data:"rs:f"}]);
   rows.push(sizeRow(st,"rs:"));
   rows.push([{text:"🖼 الخلفيات: "+(st.bgsrc==="lib"?"من المكتبة":"تلقائية"),callback_data:"rs:b"}]);
+  const every=st.bgsec??5;
+  const r3=[{text:"🔄 تتغير: "+(every?"كل "+every+"ث":"ثابتة"),callback_data:"rs:t"}];
+  if(every)r3.push({text:"🧩 عددها: "+(st.bgn||4),callback_data:"rs:n"});
+  rows.push(r3);
   rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"},{text:"✍️ التوقيع: "+(st.sig?st.sig.slice(0,14):"مفيش"),callback_data:"rs:g"}]);
   rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
   const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
@@ -225,7 +229,7 @@ function quranView(st,plan){
     }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
     if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
   }
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(st.bgsrc==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":"تلقائية من السيرفر")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(st.bgsrc==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":"تلقائية من السيرفر")+((st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
@@ -320,13 +324,15 @@ export async function reelCallback(q,d,id,user){
   else if(d==="rs:gb"){delete st.await}
   else if(d==="rs:a:916"||d==="rs:a:169"){st.ar=d==="rs:a:916"?"9:16":"16:9";st.libn=await libCount(st.ar);if(!st.libn)st.bgsrc="auto"}
   else if(d==="rs:v")st.vig=!st.vig;
+  else if(d==="rs:t"){const o=[3,5,8,0];st.bgsec=o[(o.indexOf(st.bgsec??5)+1)%o.length]}
+  else if(d==="rs:n"){const o=[3,4,6];st.bgn=o[(o.indexOf(st.bgn||4)+1)%o.length]}
   else if(d==="rs:b"){
     if(st.bgsrc!=="lib"){st.libn=await libCount(st.ar);if(!st.libn)return send(id,"🖼 مكتبة الخلفيات "+(st.ar==="16:9"?"العرضية":"الطولية")+" لسه فاضية، فالريل هيستخدم خلفيات تلقائية.");st.bgsrc="lib"}
     else st.bgsrc="auto";
   }
   else if(d==="rs:go"){
     const lib=await libraryFor(st);if(st.bgsrc==="auto")lib.bgs=[];
-    return submit(id,user,plan,used,{source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,sig:st.sig||"",logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
+    return submit(id,user,plan,used,{source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,sig:st.sig||"",bgmode:(st.bgsec??5)?"every":"static",bgsec:(st.bgsec??5)||5,bgn:st.bgn||4,logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
   }else return;
   await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
 }
