@@ -220,9 +220,12 @@ def pixabay_live(query,orient,page):
     r.raise_for_status();out=[]
     for v in r.json().get('hits',[]):
         vids=v.get('videos') or {};best=None
-        for k in ('large','medium'):
+        # vertical reels crop the centre of a landscape clip: 4K keeps it sharp if the file is small enough to fetch fast;
+        # horizontal reels (1280x720) are fine from 1080p
+        order=('large','medium') if orient=='v' else ('medium','large')
+        for k in order:
             f=vids.get(k) or {}
-            if f.get('url') and (f.get('height') or 0)>=1080 and (f.get('size') or 0)<=150*1024*1024:best=f;break
+            if f.get('url') and (f.get('height') or 0)>=1080 and (f.get('size') or 0)<=(70 if k=='large' else 150)*1024*1024:best=f;break
         if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
     return out
 
