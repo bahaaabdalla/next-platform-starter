@@ -165,10 +165,20 @@ async function handleUsage(b){
 }
 
 async function activate(){const before=await tg("getWebhookInfo");if(before.url!==WH)await tg("setWebhook",{url:WH,secret_token:SECRET,allowed_updates:["message","callback_query"],drop_pending_updates:false,max_connections:10});const info=await tg("getWebhookInfo");return {registered:info.url===WH,url:info.url,pending:info.pending_update_count,lastError:info.last_error_message||null}}
+// Backup: the VPS calls this (worker secret) page by page and stores the JSON; values are dumped by type, with TTLs.
+async function backupPage(cursor){
+  const r=await cmd("SCAN",String(cursor||"0"),"COUNT","300");const next=r[0],keys=r[1]||[];
+  if(!keys.length)return {cursor:next,items:[]};
+  const types=await pipe(keys.map(k=>["TYPE",k]));
+  const get=keys.map((k,i)=>({string:["GET",k],hash:["HGETALL",k],set:["SMEMBERS",k],zset:["ZRANGE",k,"0","-1","WITHSCORES"],list:["LRANGE",k,"0","-1"]})[types[i]]||["TYPE",k]);
+  const vals=await pipe(get),ttls=await pipe(keys.map(k=>["PTTL",k]));
+  return {cursor:next,items:keys.map((k,i)=>({k,t:types[i],v:vals[i],ttl:ttls[i]}))};
+}
 export default async function handler(req,res){const p=(req.url||"").split("?")[0];
 if(req.method==="GET"&&(p==="/"||p==="/index.html")){res.writeHead(200,{"content-type":"text/html;charset=utf-8"});return res.end('<!doctype html><html lang="ar" dir="rtl"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Media hub saver</title><style>body{font-family:system-ui;background:#f4f9f9;display:grid;place-items:center;min-height:100vh;margin:0;color:#1b4965}main{background:white;padding:36px;border-radius:20px;max-width:580px;margin:20px}a{display:inline-block;background:#1b4965;color:white;border-radius:12px;padding:15px 24px;text-decoration:none}p{line-height:1.8}</style><main><h1>🎬 Media hub saver</h1><p>Telegram webhook يعمل على Vercel. تحميل الميديا يحتاج خادم معالجة منفصل.</p><a href="https://t.me/BMEDIAHUB_BOT">افتح بوت تليجرام</a></main></html>')}
 if(req.method==="GET"&&(p==="/api/health"||p==="/health"))return ret(res,{ok:true,telegramConfigured:!!(process.env.TG_BOT_TOKEN&&SECRET),workerConfigured:!!(WORKER&&WKEY),redisConfigured:redisOn(),platforms:["youtube","tiktok","instagram","facebook"]});
 if(req.method==="GET"&&(p==="/api/activate"||p==="/activate")){try{return ret(res,{ok:true,...await activate()})}catch(e){console.error("activate",e.message);return ret(res,{ok:false,error:"activation_failed"},502)}}
 if(req.method==="POST"&&(p==="/api/usage"||p==="/usage")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:true,skipped:"no_redis"});try{const b=typeof req.body==="string"?JSON.parse(req.body):(req.body||{});return ret(res,{ok:true,...await handleUsage(b)})}catch(e){console.error("usage",e.message);return ret(res,{ok:false},500)}}
+if(req.method==="POST"&&(p==="/api/backup"||p==="/backup")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:false,error:"no_redis"},503);try{const b=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});return ret(res,{ok:true,...await backupPage(b.cursor)})}catch(e){console.error("backup",e.message);return ret(res,{ok:false},500)}}
 if(req.method==="POST"&&(p==="/api/webhook"||p==="/webhook")){if(!SECRET||req.headers["x-telegram-bot-api-secret-token"]!==SECRET)return ret(res,{ok:false},403);try{const t0=Date.now(),u=typeof req.body==="string"?JSON.parse(req.body):req.body;if(u?.message)await message(u.message,u);if(u?.callback_query)await callback(u.callback_query);console.log("upd",u?.callback_query?"cb:"+String(u.callback_query.data||"").slice(0,10):"msg",Date.now()-t0+"ms");return ret(res,{ok:true})}catch(e){console.error("webhook",e.message);return ret(res,{ok:false},500)}}
 return ret(res,{error:"not_found"},404)}
