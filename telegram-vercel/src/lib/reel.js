@@ -87,7 +87,7 @@ const SIG_HELP="✍️ اكتب اسم صفحتك زي ما عايزه يظهر 
 const sigKb={inline_keyboard:[[{text:"🚫 من غير توقيع",callback_data:"rs:g0"},{text:"↩️ رجوع",callback_data:"rs:gb"}]]};
 const ar=n=>String(n).replace(/\d/g,d=>"٠١٢٣٤٥٦٧٨٩"[d]);
 const secs=n=>n<60?n+"ث":(n%60?Math.floor(n/60)+"د "+(n%60)+"ث":(n/60)+" د");
-export async function contactLine(){try{const c=(await getCfg()).contact||"";return c?"\n\nللاشتراك كلّم "+c+" (دفع فودافون كاش).":"\n\nللاشتراك كلّم الإدارة."}catch{return ""}}
+export async function contactLine(){try{const c=await getCfg();if(c.paynum||c.payinsta)return "\n\n💳 للاشتراك دوس /subscribe (فودافون كاش"+(c.payinsta?" أو InstaPay":"")+")";return c.contact?"\n\nللاشتراك كلّم "+c.contact+" (دفع فودافون كاش).":"\n\nللاشتراك كلّم الإدارة."}catch{return ""}}
 
 const VERSE_HELP="📖 اكتب السورة ورقم الآية (أو مدى آيات):\n\nأمثلة:\n• الملك\n• البقرة 255\n• سورة مريم من الآية 37 للآية 42\n• 2:255\n• آية الكرسي\n\nلو كتبت السورة بس هبدأ من أولها، والريل بيقف عند آخر آية كاملة جوة المدة اللي هتختارها.";
 const MEDIA_HELP="🎨 ريل من ملفاتك — ابعتلي اللي عندك (أي ترتيب):\n\n🎙 صوت: ملف صوت أو voice (محاضرة، تلاوة، دعاء…)\n🔗 أو رابط فيديو عام: آخد منه الصوت أو الفيديو نفسه\n🖼 صور: لحد 20 صورة تتعرض ورا بعض بحركة وانتقالات\n📝 سكريبت: ابعته كرسالة نصية ويظهر مكتوب على الفيديو\n\nلو مفيش صور ولا فيديو هستخدم خلفيات جاهزة. كل ملف لحد 20 ميجا.\nلما تخلص دوس «✅ كمّل».";

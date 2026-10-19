@@ -10,7 +10,7 @@ export const isAdmin=id=>ADMINS().includes(String(id));
 export async function getCfg(){
   return parseCfg(obj(await cmd("HGETALL",P+"cfg")));
 }
-const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0)});
+const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50"});
 // Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
 export async function load(id){
   const d=today();

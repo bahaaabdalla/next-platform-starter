@@ -1,0 +1,88 @@
+// Subscription requests: the user pays by Vodafone Cash / InstaPay, sends the sender number + a screenshot,
+// and every admin gets the request with Approve / Reject buttons. Approving activates the paid plan for 30 days
+// (stacked on top of any remaining days). Nothing is charged by the bot itself.
+import {send,tg} from "./tg.js";
+import {cmd,pipe,obj} from "./redis.js";
+import {P,ADMINS,PLANS,getCfg} from "./quota.js";
+
+const TTL=1800,DAYS=30;
+const k=u=>P+"pay:"+u;
+const day=t=>new Date(Number(t)).toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
+const esc=s=>String(s||"").replace(/[<>&]/g,"");
+
+export async function payInfo(){const c=await getCfg();return {num:c.paynum||"",price:c.price||"50",insta:c.payinsta||""}}
+
+export async function payStart(id,user){
+  const {num,price,insta}=await payInfo();
+  if(!num&&!insta)return send(id,"💳 الاشتراك بيتفعل يدوي حاليًا. كلّم الإدارة: "+((await getCfg()).contact||"من /help"));
+  const open=await cmd("GET",P+"payopen:"+user);
+  if(open)return send(id,"⏳ عندك طلب اشتراك قيد المراجعة بالفعل. هيوصلك إشعار أول ما يتراجع.");
+  await cmd("SET",k(user),JSON.stringify({step:"phone"}),"EX",String(TTL));
+  return send(id,"💎 الاشتراك في الباقة المميزة — "+price+" جنيه / 30 يوم\n\n"+
+    "1️⃣ حوّل "+price+" جنيه على:\n"+(num?"📱 فودافون كاش: "+num+"\n":"")+(insta?"🏦 InstaPay: "+insta+"\n":"")+
+    "\n2️⃣ ابعتلي هنا رقم الموبايل اللي حوّلت منه.\n3️⃣ وبعده صورة (سكرين) التحويل.\n\nوهيتفعل اشتراكك أول ما يتراجع (عادة خلال ساعات). /cancel للإلغاء.",
+    {inline_keyboard:[[{text:"✖️ إلغاء",callback_data:"pay:x"}]]});
+}
+
+// Returns true when the message belonged to an open payment request.
+export async function payMessage(m,id,user,body){
+  const raw=await cmd("GET",k(user));if(!raw)return false;
+  const st=JSON.parse(raw);
+  if(body==="/cancel"){await cmd("DEL",k(user));await send(id,"تم إلغاء طلب الاشتراك.");return true}
+  if(st.step==="phone"){
+    const ph=body.replace(/[\s-]/g,"").replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/^\+?20/,"0");
+    if(!/^01[0125]\d{8}$/.test(ph)){await send(id,"⚠️ ابعت رقم موبايل مصري صحيح (11 رقم يبدأ بـ 01) — الرقم اللي حوّلت منه.");return true}
+    await cmd("SET",k(user),JSON.stringify({step:"shot",phone:ph}),"EX",String(TTL));
+    await send(id,"✅ تمام. ابعت دلوقتي صورة سكرين التحويل.");return true;
+  }
+  if(st.step==="shot"){
+    const photo=m.photo?.length?m.photo[m.photo.length-1].file_id:(m.document&&/^image\//.test(m.document.mime_type||"")?m.document.file_id:"");
+    if(!photo){await send(id,"📸 محتاج صورة سكرين التحويل (صورة مش نص).");return true}
+    const rid=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    const who=[m.from?.first_name,m.from?.last_name].filter(Boolean).join(" ");
+    await pipe([["HSET",P+"payreq:"+rid,"user",String(user),"phone",st.phone,"photo",photo,"name",who,"uname",m.from?.username||"","ts",String(Date.now()),"status","pending"],
+      ["EXPIRE",P+"payreq:"+rid,String(90*86400)],["LPUSH",P+"payq",rid],["LTRIM",P+"payq","0","499"],["SET",P+"payopen:"+user,rid,"EX",String(3*86400)],["DEL",k(user)]]);
+    const {price}=await payInfo();
+    const cap="💳 طلب اشتراك جديد\n👤 "+esc(who)+(m.from?.username?" @"+m.from.username:"")+"\n🆔 "+user+"\n📱 حوّل من: "+st.phone+"\n💰 المطلوب: "+price+" جنيه\n🕒 "+new Date().toLocaleString("en-GB",{timeZone:"Africa/Cairo"});
+    const kb={inline_keyboard:[[{text:"✅ قبول (30 يوم)",callback_data:"pr:a:"+rid},{text:"❌ رفض",callback_data:"pr:r:"+rid}]]};
+    for(const a of ADMINS())await tg("sendPhoto",{chat_id:Number(a),photo,caption:cap,reply_markup:kb}).catch(e=>console.error("pay notify",e.message));
+    await send(id,"📨 وصل طلبك وهيتراجع قريب. هيوصلك إشعار هنا أول ما يتفعل. شكرًا 💙");
+    return true;
+  }
+  return false;
+}
+
+// Admin buttons pr:a:<rid> / pr:r:<rid>. Returns a short toast text.
+export async function payDecision(q,d,adminId){
+  const [,act,rid]=d.split(":");if(!/^[a-z0-9]{6,20}$/.test(rid||""))return "طلب غير صالح";
+  const r=obj(await cmd("HGETALL",P+"payreq:"+rid));if(!r.user)return "الطلب مش موجود";
+  if(r.status!=="pending")return "الطلب اتراجع قبل كده ("+(r.status==="approved"?"مقبول":"مرفوض")+")";
+  // claim it atomically so two admins can't both decide
+  if((await cmd("SET",P+"paylock:"+rid,"1","NX","EX","30"))!=="OK")return "جاري التنفيذ…";
+  const u=r.user;let note;
+  if(act==="a"){
+    const cur=obj(await cmd("HGETALL",P+"u:"+u)),base=Math.max(Date.now(),cur.plan==="pro"?Number(cur.pexp)||0:0),exp=base+DAYS*86400000;
+    await pipe([["HSET",P+"u:"+u,"plan","pro","pexp",String(exp)],["HSET",P+"payreq:"+rid,"status","approved","by",String(adminId),"at",String(Date.now()),"exp",String(exp)],
+      ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"]]);
+    await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n10 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية. ابدأ من /reel").catch(()=>{});
+    note="✅ اتقبل · الاشتراك لحد "+day(exp);
+  }else{
+    await pipe([["HSET",P+"payreq:"+rid,"status","rejected","by",String(adminId),"at",String(Date.now())],["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","rejected","1"]]);
+    const c=await getCfg();
+    await send(Number(u),"⚠️ ماقدرناش نأكد التحويل بتاع طلب الاشتراك."+(c.contact?"\nلو حوّلت فعلًا كلّم "+c.contact+" ومعاك سكرين التحويل.":"\nلو حوّلت فعلًا ابعت الطلب تاني من /plans.")).catch(()=>{});
+    note="❌ اترفض";
+  }
+  try{await tg("editMessageCaption",{chat_id:q.message.chat.id,message_id:q.message.message_id,caption:(q.message.caption||"")+"\n\n"+note+" — بواسطة "+adminId})}catch{}
+  return note;
+}
+
+export async function payStatsText(){
+  const [ids,st]=await pipe([["LRANGE",P+"payq","0","49"],["HGETALL",P+"paystats"]]);
+  const s=obj(st);let pend=0;const rows=[];
+  if(ids?.length){const all=await pipe(ids.map(i=>["HMGET",P+"payreq:"+i,"status","user","phone","ts"]));
+    all.forEach((x,i)=>{if(x&&x[0]==="pending"){pend++;if(rows.length<10)rows.push("• "+x[1]+" — "+x[2]+" — "+day(x[3]))}})}
+  const {num,price,insta}=await payInfo();
+  return "💳 الاشتراكات\nالسعر: "+price+" جنيه · فودافون كاش: "+(num||"مش متحدد")+(insta?" · InstaPay: "+insta:"")+
+    "\nمقبول: "+(s.approved||0)+" · مرفوض: "+(s.rejected||0)+" · مستني مراجعة (آخر 50): "+pend+(rows.length?"\n\n"+rows.join("\n"):"")+
+    "\n\nالأوامر: /paynum 01xxxxxxxxx · /payinsta اسم@instapay · /price 50";
+}

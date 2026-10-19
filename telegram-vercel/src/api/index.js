@@ -5,6 +5,7 @@ import {planLine} from "../lib/admin.js";
 import {initReel,reelStart,reelCallback,reelMessage,isReelCallback,contactLine} from "../lib/reel.js";
 import {adminCommand,adminCallback} from "../lib/admin.js";
 import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT} from "../lib/texts.js";
+import {payStart,payMessage,payDecision} from "../lib/pay.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
@@ -74,6 +75,7 @@ async function message(m,u){
   if(!allowed(user))return send(id,"🔒 البوت ده خاص بصاحبه حاليًا.");
   if(body.startsWith("/id"))return send(id,"🆔 رقم حسابك: "+user);
   if(redisOn()&&isAdmin(user)&&body.startsWith("/")){try{if(await adminCommand(body,id))return}catch(e){console.error("admin",e.message);return send(id,"⚠️ خطأ في تنفيذ الأمر: "+e.message.slice(0,120))}}
+  if(redisOn()&&(!body.startsWith("/")||body==="/cancel")){try{if(await payMessage(m,id,user,body))return}catch(e){console.error("pay msg",e.message)}}
   // reel studio first: it consumes photos/voice/audio/links/script while a reel is being built (and admin library uploads)
   if(redisOn()&&!body.startsWith("/")){try{if(await reelMessage(m,id,user,body))return}catch(e){console.error("reel msg",e.message)}}
   if(body.startsWith("/start")){
@@ -82,7 +84,11 @@ async function message(m,u){
   }
   if(body.startsWith("/terms"))return send(id,TERMS);
   if(body.startsWith("/reel")){if(!redisOn())return send(id,"⚠️ صانع الريلز مش متاح دلوقتي.");return reelStart(id,user)}
-  if(body.startsWith("/plans"))return send(id,PLANS_TEXT+(redisOn()?await contactLine():""));
+  if(body.startsWith("/plans")||body.startsWith("/subscribe")){
+    if(!redisOn())return send(id,PLANS_TEXT);
+    if(body.startsWith("/subscribe")){const g=await gate(user);if(g)return deny(id,g);return payStart(id,user)}
+    const c=await getCfg();return send(id,PLANS_TEXT+(c.paynum||c.payinsta?"":await contactLine()),c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}]]}:undefined);
+  }
   if(body.startsWith("/me")){
     if(!redisOn())return send(id,"ℹ️ نظام الرصيد غير مفعّل حاليًا.");
     const g=await gate(user);if(g)return deny(id,g);
@@ -113,6 +119,9 @@ async function callback(q){
 async function callbackWork(q,d,ack){
   const id=q.message?.chat?.id,user=q.from?.id;if(!id||!user)return;if(!allowed(user))return;
   if(d.startsWith("adm:")){if(isAdmin(user)&&redisOn())return adminCallback(d,id);return}
+  if(d==="pay:start"){if(!redisOn())return;const g=await gate(user);if(g)return deny(id,g);return payStart(id,user)}
+  if(d==="pay:x"){if(redisOn())await cmd("DEL",P+"pay:"+user);return send(id,"تم إلغاء طلب الاشتراك.")}
+  if(d.startsWith("pr:")){if(!isAdmin(user)||!redisOn())return;const t=await payDecision(q,d,user);return ack(t,true)}
   if(isReelCallback(d)){if(!redisOn())return;return reelCallback(q,d,id,user)}
   if(d==="go"||d==="terms:ok"||d==="chk"){
     if(!redisOn())return;
@@ -152,7 +161,7 @@ async function callbackWork(q,d,ack){
 }
 
 // Worker -> Vercel: report a completed delivery (charges credit once, counts outbound bandwidth, alerts at 4.5 GB).
-const BW_ALERTS=[[4.5e9,"⚠️ ترافيك Render وصل 4.5 GB من 5 GB المجانية الشهر ده. قرر: ندفع الزيادة (0.15$/GB) ولا نقلل الاستخدام؟"],[5e9,"🚨 ترافيك Render عدّى 5 GB. أي استهلاك زيادة بيتحاسب 0.15$ لكل GB (الكارت مربوط)."]];
+const BW_ALERTS=[];   // the worker moved from Render (5 GB/month) to our own VPS: no bandwidth cap to warn about
 async function handleUsage(b){
   const user=Number(b.user)||0,r=await usage({user,job:/^(?:[0-9a-f]{16}|\d{5,15}-[0-9a-f]{10})$/.test(String(b.job||""))?b.job:"",kind:b.kind,bytes:b.bytes});
   if(r.bandwidth!==null){
