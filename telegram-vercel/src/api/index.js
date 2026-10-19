@@ -6,6 +6,7 @@ import {initReel,reelStart,reelCallback,reelMessage,isReelCallback,contactLine} 
 import {adminCommand,adminCallback} from "../lib/admin.js";
 import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT} from "../lib/texts.js";
 import {payStart,payMessage,payDecision} from "../lib/pay.js";
+import {panelRoute} from "../lib/web.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
@@ -195,4 +196,5 @@ if(req.method==="GET"&&(p==="/api/activate"||p==="/activate")){try{return ret(re
 if(req.method==="POST"&&(p==="/api/usage"||p==="/usage")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:true,skipped:"no_redis"});try{const b=typeof req.body==="string"?JSON.parse(req.body):(req.body||{});return ret(res,{ok:true,...await handleUsage(b)})}catch(e){console.error("usage",e.message);return ret(res,{ok:false},500)}}
 if(req.method==="POST"&&(p==="/api/backup"||p==="/backup")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:false,error:"no_redis"},503);try{const b=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});return ret(res,{ok:true,...await backupPage(b.cursor)})}catch(e){console.error("backup",e.message);return ret(res,{ok:false},500)}}
 if(req.method==="POST"&&(p==="/api/webhook"||p==="/webhook")){if(!SECRET||req.headers["x-telegram-bot-api-secret-token"]!==SECRET)return ret(res,{ok:false},403);try{const t0=Date.now(),u=typeof req.body==="string"?JSON.parse(req.body):req.body;if(u?.message)await message(u.message,u);if(u?.callback_query)await callback(u.callback_query);console.log("upd",u?.callback_query?"cb:"+String(u.callback_query.data||"").slice(0,10):"msg",Date.now()-t0+"ms");return ret(res,{ok:true})}catch(e){console.error("webhook",e.message);return ret(res,{ok:false},500)}}
+if(p==="/panel"||p==="/panel/"||p.startsWith("/api/panel/")){if(!redisOn())return ret(res,{ok:false,error:"no_redis"},503);try{if(await panelRoute(req,res,p))return}catch(e){console.error("panel",e.message);return ret(res,{ok:false},500)}}
 return ret(res,{error:"not_found"},404)}

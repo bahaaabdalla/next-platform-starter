@@ -45,25 +45,28 @@ export async function payMessage(m,id,user,body){
     const {price}=await payInfo();
     const cap="💳 طلب اشتراك جديد\n👤 "+esc(who)+(m.from?.username?" @"+m.from.username:"")+"\n🆔 "+user+"\n📱 حوّل من: "+st.phone+"\n💰 المطلوب: "+price+" جنيه\n🕒 "+new Date().toLocaleString("en-GB",{timeZone:"Africa/Cairo"});
     const kb={inline_keyboard:[[{text:"✅ قبول (30 يوم)",callback_data:"pr:a:"+rid},{text:"❌ رفض",callback_data:"pr:r:"+rid}]]};
-    for(const a of ADMINS())await tg("sendPhoto",{chat_id:Number(a),photo,caption:cap,reply_markup:kb}).catch(e=>console.error("pay notify",e.message));
+    const msgs=[];
+    for(const a of ADMINS()){try{const r=await tg("sendPhoto",{chat_id:Number(a),photo,caption:cap,reply_markup:kb});msgs.push(a+":"+r.message_id)}catch(e){console.error("pay notify",e.message)}}
+    await cmd("HSET",P+"payreq:"+rid,"cap",cap,"msgs",msgs.join(",")).catch(()=>{});
     await send(id,"📨 وصل طلبك وهيتراجع قريب. هيوصلك إشعار هنا أول ما يتفعل. شكرًا 💙");
     return true;
   }
   return false;
 }
 
-// Admin buttons pr:a:<rid> / pr:r:<rid>. Returns a short toast text.
-export async function payDecision(q,d,adminId){
-  const [,act,rid]=d.split(":");if(!/^[a-z0-9]{6,20}$/.test(rid||""))return "طلب غير صالح";
-  const r=obj(await cmd("HGETALL",P+"payreq:"+rid));if(!r.user)return "الطلب مش موجود";
-  if(r.status!=="pending")return "الطلب اتراجع قبل كده ("+(r.status==="approved"?"مقبول":"مرفوض")+")";
-  // claim it atomically so two admins can't both decide
-  if((await cmd("SET",P+"paylock:"+rid,"1","NX","EX","30"))!=="OK")return "جاري التنفيذ…";
+// Decide a request (from the Telegram buttons or the web panel). Returns {ok,note}.
+export async function decideRequest(rid,act,adminId){
+  if(!/^[a-z0-9]{6,20}$/.test(rid||"")||!["a","r"].includes(act))return {ok:false,note:"طلب غير صالح"};
+  const r=obj(await cmd("HGETALL",P+"payreq:"+rid));if(!r.user)return {ok:false,note:"الطلب مش موجود"};
+  if(r.status!=="pending")return {ok:false,note:"الطلب اتراجع قبل كده ("+(r.status==="approved"?"مقبول":"مرفوض")+")"};
+  // claim it atomically so two admins (or the bot + the web panel) can't both decide
+  if((await cmd("SET",P+"paylock:"+rid,"1","NX","EX","30"))!=="OK")return {ok:false,note:"جاري التنفيذ…"};
   const u=r.user;let note;
   if(act==="a"){
     const cur=obj(await cmd("HGETALL",P+"u:"+u)),base=Math.max(Date.now(),cur.plan==="pro"?Number(cur.pexp)||0:0),exp=base+DAYS*86400000;
-    await pipe([["HSET",P+"u:"+u,"plan","pro","pexp",String(exp)],["HSET",P+"payreq:"+rid,"status","approved","by",String(adminId),"at",String(Date.now()),"exp",String(exp)],
-      ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"],["HINCRBY",P+"srcpaid",cur.src||"direct","1"]]);
+    const {price}=await payInfo();
+    await pipe([["HSET",P+"u:"+u,"plan","pro","pexp",String(exp)],["HSET",P+"payreq:"+rid,"status","approved","by",String(adminId),"at",String(Date.now()),"exp",String(exp),"amount",String(price)],
+      ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"],["HINCRBY",P+"srcpaid",cur.src||"direct","1"],["HINCRBY",P+"rev",new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"}).slice(0,7),String(Number(price)||0)]]);
     await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n10 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية. ابدأ من /reel").catch(()=>{});
     note="✅ اتقبل · الاشتراك لحد "+day(exp);
   }else{
@@ -72,8 +75,17 @@ export async function payDecision(q,d,adminId){
     await send(Number(u),"⚠️ ماقدرناش نأكد التحويل بتاع طلب الاشتراك."+(c.contact?"\nلو حوّلت فعلًا كلّم "+c.contact+" ومعاك سكرين التحويل.":"\nلو حوّلت فعلًا ابعت الطلب تاني من /plans.")).catch(()=>{});
     note="❌ اترفض";
   }
-  try{await tg("editMessageCaption",{chat_id:q.message.chat.id,message_id:q.message.message_id,caption:(q.message.caption||"")+"\n\n"+note+" — بواسطة "+adminId})}catch{}
-  return note;
+  // update the request photo in every admin chat (buttons removed)
+  for(const x of String(r.msgs||"").split(",").filter(Boolean)){const [chat,mid]=x.split(":");
+    try{await tg("editMessageCaption",{chat_id:Number(chat),message_id:Number(mid),caption:(r.cap||"💳 طلب اشتراك")+"\n\n"+note+" — بواسطة "+adminId})}catch{}}
+  return {ok:true,note,legacy:!r.msgs,cap:r.cap};
+}
+
+// Admin buttons pr:a:<rid> / pr:r:<rid>. Returns a short toast text.
+export async function payDecision(q,d,adminId){
+  const [,act,rid]=d.split(":");const x=await decideRequest(rid,act,adminId);
+  if(x.ok&&x.legacy)try{await tg("editMessageCaption",{chat_id:q.message.chat.id,message_id:q.message.message_id,caption:(q.message.caption||"")+"\n\n"+x.note+" — بواسطة "+adminId})}catch{}
+  return x.note;
 }
 
 export async function sourcesText(){

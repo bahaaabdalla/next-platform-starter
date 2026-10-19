@@ -1,5 +1,6 @@
 import {pipe,cmd,obj} from "./redis.js";
 import {payStatsText,sourcesText} from "./pay.js";
+import {webLink,webRevoke} from "./web.js";
 import {tg,send,botId,sleep} from "./tg.js";
 import {P,today,monthKey,getCfg,account,describe,downloads,PLANS,planKey,reelPlan} from "./quota.js";
 import {NAME,SHORT,LONG,ADMIN_COMMANDS,COMMANDS} from "./texts.js";
@@ -89,6 +90,8 @@ export async function adminCommand(body,id){
     await cmd("HSET",P+"cfg","freecap",String(n));await send(id,"✅ حد الريلز المجانية اليومي: "+(n||"من غير حد"));return true}
   case "/payments":await send(id,await payStatsText());return true;
   case "/sources":await send(id,await sourcesText());return true;
+  case "/web":{if((a[0]||"").toLowerCase()==="off"){await webRevoke();await send(id,"🔒 كل روابط لوحة الويب القديمة اتقفلت. ابعت /web لرابط جديد.");return true}
+    const link=await webLink(id);await send(id,"🖥 لوحة التحكم على الويب (الرابط صالح 30 يوم، متبعتهوش لحد):\n"+link+"\n\nلو اتسرّب: /web off",{inline_keyboard:[[{text:"🖥 افتح لوحة التحكم",url:link}]]});return true}
   case "/paynum":{const n=String(a[0]||"").replace(/\D/g,"");if(!/^01[0125]\d{8}$/.test(n)){await send(id,"الاستخدام: /paynum 01xxxxxxxxx (رقم فودافون كاش اللي المشتركين يحوّلوا عليه)");return true}await cmd("HSET",P+"cfg","paynum",n);await send(id,"✅ رقم الدفع: "+n+"\nالمستخدمين يقدروا يشتركوا دلوقتي من /subscribe");return true}
   case "/payinsta":{const v=String(a[0]||"").trim();if(v.toLowerCase()==="off"){await cmd("HDEL",P+"cfg","payinsta");await send(id,"✅ اتشال InstaPay");return true}if(!/^[\w.@-]{3,60}$/.test(v)){await send(id,"الاستخدام: /payinsta name@instapay أو /payinsta off");return true}await cmd("HSET",P+"cfg","payinsta",v);await send(id,"✅ InstaPay: "+v);return true}
   case "/price":{const n=Number(a[0]);if(!(Number.isInteger(n)&&n>0&&n<100000)){await send(id,"الاستخدام: /price 50");return true}await cmd("HSET",P+"cfg","price",String(n));await send(id,"✅ سعر الاشتراك: "+n+" جنيه (اعدل نص /plans لو اتغير)");return true}
