@@ -168,6 +168,83 @@ def pick(theme,orient,n):
         rest=[i for i in ok if i not in sel];random.shuffle(rest);sel+=rest[:n-len(sel)]
     return [ROOT/i['file'] for i in sel],sorted({i['src'] for i in sel})
 
+
+# ---------- live mode: one fresh video per reel, nothing kept ----------
+def _frames(path,work,n=5):
+    dur=0.0
+    try:dur=float(subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0',str(path)],capture_output=True,text=True,timeout=30).stdout.strip() or 0)
+    except Exception:pass
+    out=[]
+    for k in range(n):
+        f=Path(work)/('_chk%d.jpg'%k)
+        t=max(0.0,dur*(k+0.5)/n) if dur else k
+        try:run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-ss','%.2f'%t,'-i',str(path),'-frames:v','1','-vf','scale=640:-2',str(f)],60);out.append(f)
+        except Exception:pass
+    return out
+
+def has_people(path,work):
+    """True when faces show in 3+ of 5 sampled frames or a confident person shape (HOG > 1.0) in 2+.
+    Tuned on real clips: a child close-up hits faces in 5/5; mossy rocks give at most 2 stray face hits."""
+    try:
+        import cv2,numpy as np
+    except Exception:return False
+    hog=cv2.HOGDescriptor();hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    faces=[cv2.CascadeClassifier(cv2.data.haarcascades+n) for n in ('haarcascade_frontalface_default.xml','haarcascade_profileface.xml')]
+    fhits=phits=0
+    for f in _frames(path,work):
+        im=cv2.imread(str(f));f.unlink(missing_ok=True)
+        if im is None:continue
+        g=cv2.cvtColor(im,cv2.COLOR_BGR2GRAY)
+        if any(len(c.detectMultiScale(g,scaleFactor=1.1,minNeighbors=7,minSize=(36,36))) for c in faces):fhits+=1
+        _,w=hog.detectMultiScale(im,winStride=(8,8),padding=(8,8),scale=1.05)
+        w=np.array(w).ravel()
+        if w.size and float(w.max())>1.0:phits+=1
+    return fhits>=3 or phits>=2
+
+def live_candidates(theme,orient,mindur):
+    qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for t in THEMES.values() for q in t[1]]
+    random.shuffle(qs);out=[]
+    for q in qs[:2]:
+        page=random.randint(1,3)
+        for prov in (pexels,pixabay_live):
+            try:out+=[c for c in prov(q,orient,page) if c['dur']>=mindur]
+            except Exception as e:print('stock provider',prov.__name__,type(e).__name__,str(e)[:100],flush=True)
+        if len(out)>=8:break
+    random.shuffle(out)
+    return out
+
+def pixabay_live(query,orient,page):
+    """Like pixabay() but accepts 1080p landscape for vertical reels too (the reel is 720x1280, a centre crop of 1080p is enough)."""
+    if not PIXABAY_KEY:return []
+    r=httpx.get('https://pixabay.com/api/videos/',params={'key':PIXABAY_KEY,'q':query,'video_type':'film','per_page':30,'page':page,'safesearch':'true'},timeout=30)
+    r.raise_for_status();out=[]
+    for v in r.json().get('hits',[]):
+        vids=v.get('videos') or {};best=None
+        for k in ('large','medium'):
+            f=vids.get(k) or {}
+            if f.get('url') and (f.get('height') or 0)>=1080 and (f.get('size') or 0)<=150*1024*1024:best=f;break
+        if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
+    return out
+
+def live_pick(theme,orient,dur,work,tries=5):
+    """Search, download and screen one video for this reel. Returns (path, source) or (None, None). The file lives in
+    the reel's work folder and is deleted with it."""
+    for c in live_candidates(theme,orient,min(dur,8))[:tries]:
+        dest=Path(work)/('stock_%s.mp4'%c['id'])
+        try:
+            with httpx.stream('GET',c['url'],timeout=httpx.Timeout(90,connect=20),follow_redirects=True) as r:
+                r.raise_for_status();n=0
+                with open(dest,'wb') as fh:
+                    for ch in r.iter_bytes(1<<16):
+                        n+=len(ch)
+                        if n>150*1024*1024:raise RuntimeError('too big')
+                        fh.write(ch)
+            if has_people(dest,work):print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);continue
+            return dest,c['src']
+        except Exception as e:
+            print('stock skip',c['id'],type(e).__name__,str(e)[:100],flush=True);dest.unlink(missing_ok=True)
+    return None,None
+
 if __name__=='__main__':
     a=sys.argv[1:]
     if a[:1]==['fetch']:print('added',fetch(a[1],a[2] if len(a)>2 else 'v',int(a[3]) if len(a)>3 else 20))

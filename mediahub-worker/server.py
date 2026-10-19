@@ -617,7 +617,11 @@ def reel_job(rid,spec):
    clips=[];credit=[]
    if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
     n=1 if spec.get('bgmode')=='static' else max(2,min(int(spec.get('bgn') or 4),8))
-    clips,credit=stock.pick(spec.get('theme') or 'mix','h' if spec.get('ar')=='16:9' else 'v',n)
+    orient='h' if spec.get('ar')=='16:9' else 'v'
+    clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
+    if not clips:   # live: one fresh, screened video for the whole reel, deleted with the work folder
+     v,src=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work)
+     if v:clips,credit=[v],[src]
     if clips:lib=[]
    out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo,clips=clips)
    cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '');markup=continue_markup(spec,info)
