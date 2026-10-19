@@ -91,7 +91,7 @@ export async function contactLine(){try{const c=await getCfg();if(c.paynum||c.pa
 
 const VERSE_HELP="📖 اكتب السورة ورقم الآية (أو مدى آيات):\n\nأمثلة:\n• الملك\n• البقرة 255\n• سورة مريم من الآية 37 للآية 42\n• 2:255\n• آية الكرسي\n\nلو كتبت السورة بس هبدأ من أولها، والريل بيقف عند آخر آية كاملة جوة المدة اللي هتختارها.";
 const MEDIA_HELP="🎨 ريل من ملفاتك — ابعتلي اللي عندك (أي ترتيب):\n\n🎙 صوت: ملف صوت أو voice (محاضرة، تلاوة، دعاء…)\n🔗 أو رابط فيديو عام: آخد منه الصوت أو الفيديو نفسه\n🖼 صور: لحد 20 صورة تتعرض ورا بعض بحركة وانتقالات\n📝 سكريبت: ابعته كرسالة نصية ويظهر مكتوب على الفيديو\n\nلو مفيش صور ولا فيديو هستخدم خلفيات جاهزة. كل ملف لحد 20 ميجا.\nلما تخلص دوس «✅ كمّل».";
-const pickKb={inline_keyboard:[[{text:"📖 ريل قرآن",callback_data:"rk:q"}],[{text:"🎨 ريل من صوتك / صورك / رابط",callback_data:"rk:m"}],[{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
+const pickKb={inline_keyboard:[[{text:"⚡ 3 ريلز قرآن جاهزة للنشر (مرة يوميًا)",callback_data:"rk:b"}],[{text:"📖 ريل قرآن",callback_data:"rk:q"}],[{text:"🎨 ريل من صوتك / صورك / رابط",callback_data:"rk:m"}],[{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
 const collectKb={inline_keyboard:[[{text:"✅ كمّل",callback_data:"rm:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
 
 export async function reelStart(id,user){
@@ -264,7 +264,33 @@ async function libraryFor(st){
   const o=st.ar==="16:9"?"169":"916";
   try{const [c,bgs]=await pipe([["HGET",P+"cfg","logo"],["SRANDMEMBER",P+"bgs:"+o,"6"]]);return {logo:c||"",bgs:bgs||[]}}catch{return {logo:"",bgs:[]}}
 }
-async function submit(id,user,plan,used,payload,retryKb,edit){
+// ---------- ready-made pack: 3 Quran reels in one tap (paid, once a day) ----------
+// Well-loved passages that stand on their own (surah, first ayah); the worker plays on from there up to the length cap.
+const PASSAGES=[[1,1],[112,1],[113,1],[114,1],[103,1],[94,1],[93,1],[97,1],[55,1],[67,1],[36,1],[2,255],[2,284],[2,285],[2,186],[2,152],[3,190],[3,26],[13,28],[39,53],[40,60],[65,2],[25,63],[59,21],[17,23],[18,1],[19,1],[20,1],[31,12],[24,35],[50,16],[57,20],[89,27],[99,1],[102,1],[108,1],[110,1],[87,1],[78,1],[56,1],[71,10],[14,7],[11,6],[21,87],[12,86],[23,1],[29,69],[33,56],[73,1],[76,1],[90,1],[91,1],[92,1],[95,1],[96,1],[100,1],[101,1],[109,1],[105,1],[106,1],[44,1],[48,1],[49,13],[30,21],[42,30],[64,11],[94,5],[3,173],[9,51],[28,24],[2,201],[3,8],[14,40],[7,23]];
+const PACK_RECITERS=["afasy","basit","husary","minshawi","sudais","shatri","shuraym","rifai","qatami","dossari"];
+const PACK_THEMES=["sea","mountains","forest","sky","rain","water","sunset","night","flowers"];
+export const PACK_N=3;
+const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+export function packItems(n=PACK_N){
+  const ps=shuffle(PASSAGES).slice(0,n),rs=shuffle(PACK_RECITERS),ts=shuffle(PACK_THEMES);
+  return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:ts[i%ts.length]}));
+}
+const packKey=u=>P+"pack:"+u+":"+new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
+async function reelPack(id,user,edit){
+  const {plan,used}=await reelState(user);
+  if(plan.key==="0"&&!isAdmin(user)){
+    const c=await getCfg();
+    return edit("⚡ «3 ريلز جاهزة» للمشتركين بس.\nبضغطة واحدة بيوصلك 3 ريلز قرآن مختلفة: آيات مختارة، 3 قرّاء مختلفين، وخلفيات طبيعة حقيقية. جاهزين للنشر على طول.\n\n💎 الاشتراك "+c.price+" جنيه في الشهر.",
+      c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}],[{text:"📖 أعمل ريل عادي",callback_data:"rk:q"}]]}:undefined);
+  }
+  if(await cmd("EXISTS",packKey(user)))return edit("✅ خدت ريلز النهاردة الجاهزة. ترجع بكرة لـ 3 جداد.\nوتقدر تعمل ريل بإعداداتك من «📖 ريل قرآن».",{inline_keyboard:[[{text:"📖 ريل قرآن",callback_data:"rk:q"}]]});
+  if(used+PACK_N>plan.daily)return edit("⏳ فاضلك "+Math.max(0,plan.daily-used)+" ريل النهاردة، والباقة الجاهزة محتاجة "+PACK_N+". ترجع بكرة.");
+  const sig=await sigGet(user),lib=await libraryFor({ar:"9:16"});
+  return submit(id,user,plan,used,{source:"quran",items:packItems(),bgsrc:"stock",theme:"mix",ar:"9:16",maxdur:Math.min(60,plan.cap),vig:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
+    {inline_keyboard:[[{text:"🔁 جرّب تاني",callback_data:"rk:b"}]]},edit,()=>cmd("SET",packKey(user),"1","EX","172800"),"⚡ استلمت طلب الـ 3 ريلز. هيوصلوا هنا واحد ورا التاني خلال كام دقيقة.");
+}
+
+async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   if((await cmd("SET",P+"lock:reel:"+user,"1","NX","EX","15"))!=="OK")return;
   const unlock=()=>cmd("DEL",P+"lock:reel:"+user).catch(()=>{});
   const g=await X.gate(user);if(g){await unlock();return X.deny(id,g)}
@@ -279,8 +305,8 @@ async function submit(id,user,plan,used,payload,retryKb,edit){
   if(j.httpStatus===409)return send(id,"⏳ عندك ريل لسه بيتعمل. استنى يوصلك وبعدين اعمل التاني.");
   if(j.httpStatus===429)return send(id,"🚦 الطابور مليان دلوقتي. جرّب بعد كام دقيقة.",retryKb);
   if(j.httpStatus>=400)return send(id,"⚠️ تعذر عمل الريل بالإعدادات دي.");
-  await rwDel(user);
-  return send(id,"✅ استلمت طلب الريل"+(j.position>1?" · ترتيبك في الطابور: "+j.position:"")+".\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق).");
+  await rwDel(user);if(onOk)await onOk();
+  return send(id,(okText||"✅ استلمت طلب الريل")+(j.position>1?" · ترتيبك في الطابور: "+j.position:"")+(okText?"":".\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق)."));
 }
 
 export async function reelCallback(q,d,id,user){
@@ -288,6 +314,7 @@ export async function reelCallback(q,d,id,user){
   const edit=(text,kb)=>tg("editMessageText",{chat_id:id,message_id:mid,text,disable_web_page_preview:true,...(kb?{reply_markup:kb}:{})}).catch(e=>{if(!/not modified/.test(e.message))return send(id,text,kb)});
   if(d==="reel:new")return reelStart(id,user);
   if(d.startsWith("rc:"))return reelContinue(id,user,d);
+  if(d==="rk:b")return reelPack(id,user,edit);
   if(d==="rs:x"){await rwDel(user);return edit("✖️ تم إلغاء الريل. تقدر تبدأ من جديد من /reel")}
   const st=await rwGet(user);
   if(!st)return send(id,"⌛ الجلسة دي انتهت. ابدأ من جديد من /reel");
