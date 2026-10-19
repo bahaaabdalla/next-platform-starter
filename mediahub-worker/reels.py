@@ -225,15 +225,16 @@ def ayah_pages(text,W,H):
 
 def text_png(lines,W,H,dest):
  from PIL import Image,ImageDraw,ImageFilter
- L=layout(W,H);f=font(FONT,L['size'])
+ L=layout(W,H);f=font(FONT,L['size']);SW=max(2,L['size']//17)
  img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
  top=L['cy']-len(lines)*L['lh']//2
  ds=ImageDraw.Draw(sh);dt=ImageDraw.Draw(img)
  for i,ln in enumerate(lines):
   y=top+i*L['lh']
-  ds.text((W//2+2,y+3),ln,font=f,fill=(0,0,0,230),anchor='mt',direction='rtl',language='ar')
-  dt.text((W//2,y),ln,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar')
- sh=sh.filter(ImageFilter.GaussianBlur(6))
+  # soft drop shadow + a dark outline so the verse stays readable on bright or busy footage
+  ds.text((W//2+2,y+4),ln,font=f,fill=(0,0,0,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW+3,stroke_fill=(0,0,0,255))
+  dt.text((W//2,y),ln,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW,stroke_fill=(0,0,0,235))
+ sh=sh.filter(ImageFilter.GaussianBlur(7))
  full=Image.alpha_composite(sh,img);box=full.getbbox() or (0,0,2,2)
  box=(max(0,box[0]-4)&~1,max(0,box[1]-4)&~1,min(W,box[2]+4),min(H,box[3]+4))
  full.crop(box).save(dest)
@@ -255,16 +256,16 @@ def chrome_png(W,H,label,wm,dest,vignette=False,logo=None,title=None,sig=None):
  if title:
   tf=font(TITLE_FONT,62 if W<H else 50);y=int(H*(0.10 if W<H else 0.07))
   for dd,fill,off in ((ds,(0,0,0,230),3),(d,(255,255,255,245),0)):
-   dd.text((W//2+off,y+off),title,font=tf,fill=fill,anchor='mt',direction='rtl',language='ar')
+   dd.text((W//2+off,y+off),title,font=tf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=3,stroke_fill=(0,0,0,220))
  elif label:
   lf=font(UI_FONT,34 if W<H else 30);y=int(H*0.07)
   for dd,fill,off in ((ds,(0,0,0,200),2),(d,(255,255,255,220),0)):
-   dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar')
+   dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=2,stroke_fill=(0,0,0,200))
  if sig:
   ar=is_arabic(sig);sf=font(SIG_AR_FONT if ar else SIG_LAT_FONT,(46 if ar else 50) if W<H else (38 if ar else 42))
   y=int(H*(0.745 if W<H else 0.835));kw=dict(direction='rtl',language='ar') if ar else {}
   for dd,fill,off in ((ds,(0,0,0,220),2),(d,(255,255,255,235),0)):
-   dd.text((W//2+off,y+off),sig,font=sf,fill=fill,anchor='mm',**kw)
+   dd.text((W//2+off,y+off),sig,font=sf,fill=fill,anchor='mm',stroke_width=2,stroke_fill=(0,0,0,210),**kw)
  if wm:
   placed=False
   if logo and Path(logo).exists():
