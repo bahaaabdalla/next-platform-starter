@@ -63,7 +63,7 @@ export async function payDecision(q,d,adminId){
   if(act==="a"){
     const cur=obj(await cmd("HGETALL",P+"u:"+u)),base=Math.max(Date.now(),cur.plan==="pro"?Number(cur.pexp)||0:0),exp=base+DAYS*86400000;
     await pipe([["HSET",P+"u:"+u,"plan","pro","pexp",String(exp)],["HSET",P+"payreq:"+rid,"status","approved","by",String(adminId),"at",String(Date.now()),"exp",String(exp)],
-      ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"]]);
+      ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"],["HINCRBY",P+"srcpaid",cur.src||"direct","1"]]);
     await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n10 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية. ابدأ من /reel").catch(()=>{});
     note="✅ اتقبل · الاشتراك لحد "+day(exp);
   }else{
@@ -74,6 +74,13 @@ export async function payDecision(q,d,adminId){
   }
   try{await tg("editMessageCaption",{chat_id:q.message.chat.id,message_id:q.message.message_id,caption:(q.message.caption||"")+"\n\n"+note+" — بواسطة "+adminId})}catch{}
   return note;
+}
+
+export async function sourcesText(){
+  const [a,b]=await pipe([["HGETALL",P+"src"],["HGETALL",P+"srcpaid"]]);const s=obj(a),pd=obj(b);
+  const keys=[...new Set([...Object.keys(s),...Object.keys(pd)])].sort((x,y)=>(Number(s[y])||0)-(Number(s[x])||0));
+  if(!keys.length)return "📊 مفيش زيارات من روابط إعلانات لسه.\nاستخدم روابط بالشكل ده:\nt.me/BMEDIAHUB_BOT?start=fb1\nt.me/BMEDIAHUB_BOT?start=fb1_sub (يفتح الاشتراك مباشرة)";
+  return "📊 مصادر المستخدمين (روابط الإعلانات)\n\n"+keys.slice(0,40).map(k=>"• "+k+" — دخول: "+(s[k]||0)+" · اشتراكات: "+(pd[k]||0)).join("\n");
 }
 
 export async function payStatsText(){

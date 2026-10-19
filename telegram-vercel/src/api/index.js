@@ -79,7 +79,12 @@ async function message(m,u){
   // reel studio first: it consumes photos/voice/audio/links/script while a reel is being built (and admin library uploads)
   if(redisOn()&&!body.startsWith("/")){try{if(await reelMessage(m,id,user,body))return}catch(e){console.error("reel msg",e.message)}}
   if(body.startsWith("/start")){
+    // deep links for ads: t.me/BMEDIAHUB_BOT?start=<source>  (…_sub opens the subscription, …_reel opens the reel maker)
+    const src=(body.split(/\s+/)[1]||"").toLowerCase();
+    if(redisOn()&&/^[a-z0-9_]{1,32}$/.test(src)){const base=src.replace(/(^|_)(sub|reel)$/,"")||src;try{await pipe([["HINCRBY",P+"src",base,"1"],["HSETNX",P+"u:"+user,"src",base]])}catch(e){console.error("src",e.message)}}
     if(redisOn()&&!isAdmin(user)){const g=await gate(user);if(g)return deny(id,g)}
+    if(redisOn()&&/(^|_)sub$/.test(src))return payStart(id,user);
+    if(redisOn()&&/(^|_)reel$/.test(src))return reelStart(id,user);
     return send(id,redisOn()?welcome(await getCfg()):"🎬 أهلاً بيك!\nابعت رابط فيديو عام.",menu);
   }
   if(body.startsWith("/terms"))return send(id,TERMS);
