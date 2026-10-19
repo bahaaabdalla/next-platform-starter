@@ -22,6 +22,9 @@ SIZES={'9:16':(720,1280),'16:9':(1280,720)}
 # Full-surah recordings with per-ayah timestamps (quran.com / quranicaudio): one continuous cut, no joins at all.
 QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5}
 QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
+# mp3quran.net full-surah recordings with per-ayah timings (reciters quran.com has no timings for)
+MP3Q={'qatami':(86,'https://cdn.mp3quran.net/audio/nasser-qatami/r1/'),'dossari':(92,'https://cdn.mp3quran.net/audio/yasser-dosari/r1/')}
+MP3Q_API='https://mp3quran.net/api/v3/ayat_timing?surah=%d&read=%d'
 RECITERS={   # key -> (Arabic name, everyayah folder)
  'afasy':('مشاري راشد العفاسي','Alafasy_128kbps'),
  'basit':('عبد الباسط عبد الصمد','Abdul_Basit_Murattal_192kbps'),
@@ -33,6 +36,7 @@ RECITERS={   # key -> (Arabic name, everyayah folder)
  'shatri':('أبو بكر الشاطري','Abu_Bakr_Ash-Shaatree_128kbps'),
  'shuraym':('سعود الشريم','Saood_ash-Shuraym_128kbps'),
  'rifai':('هاني الرفاعي','Hani_Rifai_192kbps'),
+ 'qatami':('ناصر القطامي','Nasser_Alqatami_128kbps'),
 }
 # The bundled text uses the King Fahd complex encoding for "open" tanween; map it to the standard Unicode marks the font draws.
 TANWEEN=str.maketrans({'ٗ':'ࣰ','ٞ':'ࣱ','ٖ':'ࣲ'})
@@ -119,9 +123,15 @@ def recitation(ayat,work,hardcap):
 
 def qdc_chapter(cache,key,s):
  """(surah mp3 path, {ayah: (from_ms, to_ms)}) for reciters with full-surah recordings, else None."""
- if key not in QDC:return None
+ if key not in QDC and key not in MP3Q:return None
  d=cache/('qdc_%s'%key);d.mkdir(parents=True,exist_ok=True)
  meta=d/('%03d.json'%s);mp3=d/('%03d.mp3'%s)
+ if not meta.exists() and key in MP3Q:
+  rid,folder=MP3Q[key]
+  r=httpx.get(MP3Q_API%(s,rid),timeout=httpx.Timeout(20,connect=10),follow_redirects=True);r.raise_for_status()
+  ts={int(t['ayah']):(int(t['start_time']),int(t['end_time']),int(t['start_time'])) for t in r.json() if int(t.get('ayah') or 0)>0 and int(t['end_time'])>int(t['start_time'])}
+  if len(ts)<ayah_count(s):raise RuntimeError('incomplete timings')
+  meta.write_text(json.dumps({'url':folder+'%03d.mp3'%s,'ts':ts}))
  if not meta.exists():
   r=httpx.get(QDC_API%(QDC[key],s),timeout=httpx.Timeout(20,connect=10),follow_redirects=True);r.raise_for_status()
   af=r.json().get('audio_file') or {}
