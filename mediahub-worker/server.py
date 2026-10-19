@@ -611,6 +611,13 @@ def continue_markup(spec,info):
 def quran_reel(spec,work,lib,logo,on_stage=None):
  """One Quran reel. Background: stock pool -> one live screened nature video -> library/placeholder stills."""
  clips=[];credit=[]
+ if spec.get('theme') in stock.PHOTO_THEMES and spec.get('bgsrc')=='stock':
+  # Kaaba: good free video is rare, so high-resolution photos crossfading with a slow pan + vignette
+  imgs,cr,band=stock.photo_pick(spec['theme'],5)
+  if imgs:
+   spec.update(bgmode='every',bgsec=6,bgn=len(imgs),vig=True,plate=reels.plate_for(band))
+   out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=[str(p) for p in imgs],logo=logo,clips=())
+   return out,info,reels.caption(info)+'\n🖼 الصور: '+cr
  if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
   n=1 if spec.get('bgmode')=='static' else max(2,min(int(spec.get('bgn') or 4),8))
   orient='h' if spec.get('ar')=='16:9' else 'v'

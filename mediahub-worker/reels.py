@@ -511,7 +511,7 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
   t=t0
   for i,(p,wt) in enumerate(zip(pg,weights)):
    end=t1 if i==len(pg)-1 else t+(t1-t0)*wt/tot
-   pages.append([text_png(p,W,H,work/('p%03d.png'%k),lm,float(spec.get('plate') or 0) if clips else 0.0),t,min(end,total_v)]);k+=1;t=end
+   pages.append([text_png(p,W,H,work/('p%03d.png'%k),lm,float(spec.get('plate') or 0)),t,min(end,total_v)]);k+=1;t=end
  ayat=[a for a in ayat if any(a[0]==x[0] for x in spans)]
  last=ayat[-1][0]
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))

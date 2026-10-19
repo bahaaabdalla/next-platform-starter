@@ -10,7 +10,7 @@ CLI (inside the worker container):
   python stock.py set ok  px123 pb456   # approve / reject ('no') clips
   python stock.py stats
 """
-import json,os,random,subprocess,sys,threading,time
+import json,os,random,re,subprocess,sys,threading,time
 from pathlib import Path
 import httpx
 
@@ -295,6 +295,71 @@ def live_pick(theme,orient,dur,work,tries=6,hd=False):
             print('stock skip',c['id'],type(e).__name__,str(e)[:100],flush=True);dest.unlink(missing_ok=True)
     if spare:return spare[1],spare[2],spare[3]
     return None,None,0.0
+
+# ---------- high-resolution free photos (Wikimedia Commons) for themes where good video is scarce ----------
+# Only free licences (public domain, CC0, CC BY, CC BY-SA); the authors are credited in the reel caption.
+PHOTO_THEMES={'kaaba':['Kaaba','Masjid al-Haram','Kaaba night','Mataf Kaaba','Great Mosque of Mecca']}
+PHOTO_DIR=ROOT/'photos';PHOTO_DIR.mkdir(parents=True,exist_ok=True)
+UA={'User-Agent':'BMediaHub/1.0 (reel backgrounds; contact bahaadev.duckdns.org)'}
+FREE_LIC=re.compile(r'^(cc0|public domain|pd|cc[ -]by([ -]sa)?([ -][0-9.]+)?)$',re.I)
+BAD_TITLE=re.compile(r'(map|plan|diagram|drawing|logo|svg|coin|stamp|banknote|poster|painting|manuscript|sketch|model)',re.I)
+
+def _photo_index(theme):
+    f=PHOTO_DIR/(theme+'.json')
+    try:return json.loads(f.read_text())
+    except Exception:return {'ts':0,'items':[]}
+
+def commons_refresh(theme,want=40):
+    """Search Commons, keep big free-licence photos without close-up faces, cache them (about 0.5-1.5 MB each)."""
+    idx=_photo_index(theme);have={i['id'] for i in idx['items']};bad=set(idx.get('bad',[]))
+    for q in PHOTO_THEMES[theme]:
+        if len(idx['items'])>=want:break
+        try:r=httpx.get('https://commons.wikimedia.org/w/api.php',headers=UA,timeout=30,params={'action':'query','format':'json','generator':'search',
+            'gsrsearch':'filetype:bitmap '+q,'gsrnamespace':6,'gsrlimit':50,'prop':'imageinfo','iiprop':'url|size|extmetadata','iiurlwidth':4000,'iiurlheight':2400})
+        except Exception as e:print('commons search',type(e).__name__,flush=True);continue
+        for pg in (r.json().get('query',{}).get('pages') or {}).values():
+            pid=str(pg.get('pageid'));ii=(pg.get('imageinfo') or [{}])[0];meta=ii.get('extmetadata') or {}
+            if pid in have or pid in bad or BAD_TITLE.search(pg.get('title','')):continue
+            lic=re.sub('<[^>]+>','',(meta.get('LicenseShortName') or {}).get('value','')).strip()
+            if not FREE_LIC.match(lic) or (ii.get('width') or 0)<1900 or (ii.get('height') or 0)<1900:continue
+            dest=PHOTO_DIR/(theme+'_'+pid+'.jpg')
+            try:
+                b=httpx.get(ii.get('thumburl') or ii['url'],headers=UA,timeout=60,follow_redirects=True);b.raise_for_status();dest.write_bytes(b.content)
+                people,band,mean=screen_photo(dest)
+                if people or mean<25:dest.unlink(missing_ok=True);bad.add(pid);continue
+            except Exception as e:print('commons get',pid,type(e).__name__,flush=True);dest.unlink(missing_ok=True);continue
+            artist=re.sub('<[^>]+>','',(meta.get('Artist') or {}).get('value','')).strip()[:40]
+            idx['items'].append({'id':pid,'file':dest.name,'lic':lic,'by':artist,'band':band,'w':ii.get('width'),'h':ii.get('height')});have.add(pid)
+            if len(idx['items'])>=want:break
+    idx['ts']=time.time();idx['bad']=sorted(bad)[-500:]
+    (PHOTO_DIR/(theme+'.json')).write_text(json.dumps(idx,ensure_ascii=False))
+    return len(idx['items'])
+
+def screen_photo(path):
+    """(close-up faces, centre brightness, mean brightness) for one photo."""
+    try:
+        import cv2,numpy as np
+        im=cv2.imread(str(path));h,w=im.shape[:2];s=900/max(h,w);im=cv2.resize(im,(int(w*s),int(h*s)))
+        g=cv2.cvtColor(im,cv2.COLOR_BGR2GRAY);h,w=g.shape
+        fc=cv2.CascadeClassifier(cv2.data.haarcascades+'haarcascade_frontalface_default.xml')
+        big=[f for f in fc.detectMultiScale(g,scaleFactor=1.1,minNeighbors=8,minSize=(int(h*0.08),int(h*0.08)))]
+        return bool(big),float(np.percentile(g[int(h*.30):int(h*.62),int(w*.30):int(w*.70)],70)),float(g.mean())
+    except Exception:return False,128.0,128.0
+
+def photo_pick(theme,n=5):
+    """n random cached photos for the theme (refreshing the cache when it is small or older than a week).
+    Returns ([paths], credit text, median brightness)."""
+    idx=_photo_index(theme)
+    if len(idx['items'])<12 or time.time()-idx['ts']>7*86400:
+        try:commons_refresh(theme);idx=_photo_index(theme)
+        except Exception as e:print('commons refresh',type(e).__name__,str(e)[:100],flush=True)
+    items=[i for i in idx['items'] if (PHOTO_DIR/i['file']).exists()]
+    if not items:return [],'',0.0
+    pick=random.sample(items,min(n,len(items)))
+    by=sorted({i['by'] for i in pick if i['by']})[:3]
+    credit='Wikimedia Commons'+(' ('+'، '.join(by)+')' if by else '')
+    bands=sorted(i['band'] for i in pick)
+    return [PHOTO_DIR/i['file'] for i in pick],credit,bands[len(bands)//2]
 
 if __name__=='__main__':
     a=sys.argv[1:]
