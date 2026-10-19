@@ -91,7 +91,7 @@ export async function contactLine(){try{const c=await getCfg();if(c.paynum||c.pa
 
 const VERSE_HELP="📖 اكتب السورة ورقم الآية (أو مدى آيات):\n\nأمثلة:\n• الملك\n• البقرة 255\n• سورة مريم من الآية 37 للآية 42\n• 2:255\n• آية الكرسي\n\nلو كتبت السورة بس هبدأ من أولها، والريل بيقف عند آخر آية كاملة جوة المدة اللي هتختارها.";
 const MEDIA_HELP="🎨 ريل من ملفاتك — ابعتلي اللي عندك (أي ترتيب):\n\n🎙 صوت: ملف صوت أو voice (محاضرة، تلاوة، دعاء…)\n🔗 أو رابط فيديو عام: آخد منه الصوت أو الفيديو نفسه\n🖼 صور: لحد 20 صورة تتعرض ورا بعض بحركة وانتقالات\n📝 سكريبت: ابعته كرسالة نصية ويظهر مكتوب على الفيديو\n\nلو مفيش صور ولا فيديو هستخدم خلفيات جاهزة. كل ملف لحد 20 ميجا.\nلما تخلص دوس «✅ كمّل».";
-const pickKb={inline_keyboard:[[{text:"⚡ 3 ريلز قرآن جاهزة للنشر (مرة يوميًا)",callback_data:"rk:b"}],[{text:"📖 ريل قرآن",callback_data:"rk:q"}],[{text:"🎨 ريل من صوتك / صورك / رابط",callback_data:"rk:m"}],[{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
+const pickKb={inline_keyboard:[[{text:"⚡ ريلز قرآن جاهزة للنشر (3 أو 5 · مرة يوميًا)",callback_data:"rk:b"}],[{text:"📖 ريل قرآن",callback_data:"rk:q"}],[{text:"🎨 ريل من صوتك / صورك / رابط",callback_data:"rk:m"}],[{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
 const collectKb={inline_keyboard:[[{text:"✅ كمّل",callback_data:"rm:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]]};
 
 export async function reelStart(id,user){
@@ -204,7 +204,7 @@ function durRows(st,plan,prefix){
   if(DUR.length>5)rows.push(DUR.slice(5).map(n=>({text:lab(n),callback_data:prefix+"d:"+n})));
   return rows;
 }
-const THEMES=[["mix","🎲 منوّعة"],["sea","🌊 بحر"],["mountains","🏔 جبال"],["forest","🌲 غابات"],["sky","☁️ سماء وسحاب"],["rain","🌧 مطر"],["water","💧 أنهار وشلالات"],["sunset","🌅 غروب وشروق"],["night","🌌 ليل ونجوم"],["snow","❄️ تلج"],["desert","🏜 صحراء"],["flowers","🌾 زهور وحقول"]];
+const THEMES=[["mix","🎲 منوّعة"],["sea","🌊 بحر"],["mountains","🏔 جبال"],["forest","🌲 غابات"],["sky","☁️ سماء وسحاب"],["rain","🌧 مطر"],["water","💧 أنهار وشلالات"],["sunset","🌅 غروب وشروق"],["night","🌌 ليل ونجوم"],["snow","❄️ تلج"],["desert","🏜 صحراء"],["flowers","🌾 زهور وحقول"],["kaaba","🕋 الكعبة ومكة"],["mosque","🕌 مساجد"]];
 const TNAME=Object.fromEntries(THEMES);
 const BGSRC={stock:"🎞 فيديو طبيعة",lib:"🖼 من المكتبة",img:"🖼 صور تلقائية"};
 const bgsrcOf=st=>st.bgsrc==="lib"?"lib":(st.bgsrc==="img"||st.bgsrc==="auto")?"img":"stock";
@@ -223,6 +223,7 @@ function quranView(st,plan){
     if(every)r3.push({text:"🧩 عددها: "+(st.bgn||4),callback_data:"rs:n"});
     rows.push(r3);
   }
+  rows.push([{text:"📝 الكتابة: "+(st.lines?"سطرين سطرين":"الآية كاملة"),callback_data:"rs:l"}]);
   rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"},{text:"✍️ التوقيع: "+(st.sig?st.sig.slice(0,14):"مفيش"),callback_data:"rs:g"}]);
   rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
   const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
@@ -238,7 +239,7 @@ function quranView(st,plan){
     }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
     if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
   }
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديو طبيعة حقيقي (Pexels/Pixabay) · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+(bgsrcOf(st)==="stock"?"":(st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديو طبيعة حقيقي (Pexels/Pixabay) · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+(bgsrcOf(st)==="stock"?"":(st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n📝 الكتابة: "+(st.lines?"سطرين سطرين مع الصوت":"الآية كاملة على الشاشة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
@@ -269,25 +270,44 @@ async function libraryFor(st){
 const PASSAGES=[[1,1],[112,1],[113,1],[114,1],[103,1],[94,1],[93,1],[97,1],[55,1],[67,1],[36,1],[2,255],[2,284],[2,285],[2,186],[2,152],[3,190],[3,26],[13,28],[39,53],[40,60],[65,2],[25,63],[59,21],[17,23],[18,1],[19,1],[20,1],[31,12],[24,35],[50,16],[57,20],[89,27],[99,1],[102,1],[108,1],[110,1],[87,1],[78,1],[56,1],[71,10],[14,7],[11,6],[21,87],[12,86],[23,1],[29,69],[33,56],[73,1],[76,1],[90,1],[91,1],[92,1],[95,1],[96,1],[100,1],[101,1],[109,1],[105,1],[106,1],[44,1],[48,1],[49,13],[30,21],[42,30],[64,11],[94,5],[3,173],[9,51],[28,24],[2,201],[3,8],[14,40],[7,23]];
 const PACK_RECITERS=["afasy","basit","husary","minshawi","sudais","shatri","shuraym","rifai","qatami","dossari"];
 const PACK_THEMES=["sea","mountains","forest","sky","rain","water","sunset","night","flowers"];
-export const PACK_N=3;
+export const PACK_SIZES=[3,5];
+const PACK_BG=[["mix","🎲 طبيعة منوّعة"],["kaaba","🕋 الكعبة ومكة"],["mosque","🕌 مساجد"],["sea","🌊 بحر"],["sky","☁️ سماء"],["night","🌌 ليل ونجوم"],["sunset","🌅 غروب"],["forest","🌲 غابات"]];
 const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
-export function packItems(n=PACK_N){
+export function packItems(n=3,theme="mix"){
   const ps=shuffle(PASSAGES).slice(0,n),rs=shuffle(PACK_RECITERS),ts=shuffle(PACK_THEMES);
-  return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:ts[i%ts.length]}));
+  return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:theme==="mix"?ts[i%ts.length]:theme}));
 }
 const packKey=u=>P+"pack:"+u+":"+new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
-async function reelPack(id,user,edit){
+function packView(st){
+  const n=st.pn||3,bg=st.pbg||"mix";
+  return {text:"⚡ ريلز قرآن جاهزة للنشر\n\nكل ريل: آيات مختارة، وقارئ مختلف، وخلفية فيديو حقيقية بجودة 1080، والكتابة سطرين سطرين مع الصوت.\n\n🔢 العدد: "+n+" ريلز\n🖼 الخلفيات: "+Object.fromEntries(PACK_BG)[bg]+"\n\nمرة واحدة في اليوم، والريلز بتتحسب من رصيدك اليومي.",
+    kb:{inline_keyboard:[PACK_SIZES.map(k=>({text:(k===n?"✅ ":"")+k+" ريلز",callback_data:"rp:n"+k})),
+      ...[0,2,4,6].map(i=>PACK_BG.slice(i,i+2).map(([k,l])=>({text:(k===bg?"✅ ":"")+l,callback_data:"rp:b"+k}))),
+      [{text:"🚀 ابدأ",callback_data:"rp:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]]}};
+}
+async function packGuard(user,n,edit){
   const {plan,used}=await reelState(user);
   if(plan.key==="0"&&!isAdmin(user)){
     const c=await getCfg();
-    return edit("⚡ «3 ريلز جاهزة» للمشتركين بس.\nبضغطة واحدة بيوصلك 3 ريلز قرآن مختلفة: آيات مختارة، 3 قرّاء مختلفين، وخلفيات طبيعة حقيقية. جاهزين للنشر على طول.\n\n💎 الاشتراك "+c.price+" جنيه في الشهر.",
-      c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}],[{text:"📖 أعمل ريل عادي",callback_data:"rk:q"}]]}:undefined);
-  }
-  if(await cmd("EXISTS",packKey(user)))return edit("✅ خدت ريلز النهاردة الجاهزة. ترجع بكرة لـ 3 جداد.\nوتقدر تعمل ريل بإعداداتك من «📖 ريل قرآن».",{inline_keyboard:[[{text:"📖 ريل قرآن",callback_data:"rk:q"}]]});
-  if(used+PACK_N>plan.daily)return edit("⏳ فاضلك "+Math.max(0,plan.daily-used)+" ريل النهاردة، والباقة الجاهزة محتاجة "+PACK_N+". ترجع بكرة.");
+    await edit("⚡ «ريلز جاهزة» للمشتركين بس.\nبضغطة واحدة بيوصلك 3 أو 5 ريلز قرآن مختلفة: آيات مختارة، وقرّاء مختلفين، وخلفيات فيديو حقيقية بجودة 1080. جاهزين للنشر على طول.\n\n💎 الاشتراك "+c.price+" جنيه في الشهر.",
+      c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}],[{text:"📖 أعمل ريل عادي",callback_data:"rk:q"}]]}:undefined);return null}
+  if(await cmd("EXISTS",packKey(user))){await edit("✅ خدت ريلز النهاردة الجاهزة. ترجع بكرة لريلز جداد.\nوتقدر تعمل ريل بإعداداتك من «📖 ريل قرآن».",{inline_keyboard:[[{text:"📖 ريل قرآن",callback_data:"rk:q"}]]});return null}
+  if(used+(n||3)>plan.daily){await edit("⏳ فاضلك "+Math.max(0,plan.daily-used)+" ريل النهاردة، والريلز الجاهزة محتاجة "+(n||3)+". اختار عدد أقل أو ارجع بكرة.");return null}
+  return {plan,used};
+}
+async function reelPack(id,user,edit){
+  if(!(await packGuard(user,3,edit)))return;
+  const st={step:"pack",pn:3,pbg:"mix"};await rwSet(user,st);const v=packView(st);return edit(v.text,v.kb);
+}
+async function packCallback(id,user,d,st,edit){
+  if(!st||st.step!=="pack")return reelPack(id,user,edit);
+  if(d.startsWith("rp:n")){const n=Number(d.slice(4));if(PACK_SIZES.includes(n))st.pn=n}
+  else if(d.startsWith("rp:b")){const b=d.slice(4);if(PACK_BG.some(x=>x[0]===b))st.pbg=b}
+  if(d!=="rp:go"){await rwSet(user,st);const v=packView(st);return edit(v.text,v.kb)}
+  const g=await packGuard(user,st.pn,edit);if(!g)return;
   const sig=await sigGet(user),lib=await libraryFor({ar:"9:16"});
-  return submit(id,user,plan,used,{source:"quran",items:packItems(),bgsrc:"stock",theme:"mix",ar:"9:16",maxdur:Math.min(60,plan.cap),vig:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
-    {inline_keyboard:[[{text:"🔁 جرّب تاني",callback_data:"rk:b"}]]},edit,()=>cmd("SET",packKey(user),"1","EX","172800"),"⚡ استلمت طلب الـ 3 ريلز. هيوصلوا هنا واحد ورا التاني خلال كام دقيقة.");
+  return submit(id,user,g.plan,g.used,{source:"quran",items:packItems(st.pn,st.pbg),bgsrc:"stock",theme:st.pbg,ar:"9:16",maxdur:Math.min(60,g.plan.cap),vig:false,lines:2,hd:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
+    {inline_keyboard:[[{text:"🔁 جرّب تاني",callback_data:"rp:go"}]]},edit,()=>cmd("SET",packKey(user),"1","EX","172800"),"⚡ استلمت طلب الـ "+st.pn+" ريلز. هيوصلوا هنا واحد ورا التاني خلال كام دقيقة.");
 }
 
 async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
@@ -299,7 +319,7 @@ async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   if(!X.hasWorker()){await unlock();return send(id,"⚠️ خادم المعالجة غير مربوط.")}
   await edit("⏳ جاري إرسال طلب الريل…");
   if(!(await X.wake(id))){await unlock();return send(id,"⌛ الخادم لسه بيصحى. دوس «اعمل الريل» تاني بعد دقيقة.",retryKb)}
-  const j=await X.wk("/reels",{chat_id:id,user_id:user,cap:plan.cap,wm:plan.wm?"@BMEDIAHUB_BOT":"",...payload});
+  const j=await X.wk("/reels",{chat_id:id,user_id:user,cap:plan.cap,wm:plan.wm?"@BMEDIAHUB_BOT":"",hd:plan.key!=="0"||isAdmin(user),...payload});
   await unlock();
   if(j.error)return send(id,"⚠️ خادم المعالجة مش متاح مؤقتًا. جرّب تاني.",retryKb);
   if(j.httpStatus===409)return send(id,"⏳ عندك ريل لسه بيتعمل. استنى يوصلك وبعدين اعمل التاني.");
@@ -315,6 +335,7 @@ export async function reelCallback(q,d,id,user){
   if(d==="reel:new")return reelStart(id,user);
   if(d.startsWith("rc:"))return reelContinue(id,user,d);
   if(d==="rk:b")return reelPack(id,user,edit);
+  if(d.startsWith("rp:"))return packCallback(id,user,d,await rwGet(user),edit);
   if(d==="rs:x"){await rwDel(user);return edit("✖️ تم إلغاء الريل. تقدر تبدأ من جديد من /reel")}
   const st=await rwGet(user);
   if(!st)return send(id,"⌛ الجلسة دي انتهت. ابدأ من جديد من /reel");
@@ -360,6 +381,7 @@ export async function reelCallback(q,d,id,user){
   else if(d==="rs:gb"){delete st.await}
   else if(d==="rs:a:916"||d==="rs:a:169"){st.ar=d==="rs:a:916"?"9:16":"16:9";st.libn=await libCount(st.ar);if(!st.libn&&st.bgsrc==="lib")st.bgsrc="stock"}
   else if(d==="rs:v")st.vig=!st.vig;
+  else if(d==="rs:l")st.lines=st.lines?0:2;
   else if(d==="rs:t"){const o=[3,5,8,0];st.bgsec=o[(o.indexOf(st.bgsec??5)+1)%o.length]}
   else if(d==="rs:n"){const o=[3,4,6];st.bgn=o[(o.indexOf(st.bgn||4)+1)%o.length]}
   else if(d==="rs:b"){   // stock videos -> library (if it has images) -> generated stills -> stock videos
@@ -369,7 +391,7 @@ export async function reelCallback(q,d,id,user){
   else if(d==="rs:m"){const k=THEMES.map(t=>t[0]),i=k.indexOf(st.theme||"mix");st.theme=k[(i+1)%k.length]}
   else if(d==="rs:go"){
     const lib=await libraryFor(st),src=bgsrcOf(st);if(src!=="lib")lib.bgs=[];
-    return submit(id,user,plan,used,{bgsrc:src,theme:st.theme||"mix",source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,sig:st.sig||"",bgmode:(st.bgsec??5)?"every":"static",bgsec:(st.bgsec??5)||5,bgn:st.bgn||4,logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
+    return submit(id,user,plan,used,{bgsrc:src,theme:st.theme||"mix",source:"quran",surah:st.surah,frm:st.frm,to:st.to||null,reciter:st.reciter,maxdur:st.fit?plan.cap:Math.min(st.dur,plan.cap),ar:st.ar,vig:!!st.vig,sig:st.sig||"",bgmode:(st.bgsec??5)?"every":"static",bgsec:(st.bgsec??5)||5,bgn:st.bgn||4,lines:st.lines||0,logo:lib.logo,bgs:lib.bgs},quranView(st,plan).kb,edit);
   }else return;
   await rwSet(user,st);const v=quranView(st,plan);return edit(v.text,v.kb);
 }
@@ -388,4 +410,4 @@ async function reelContinue(id,user,d){
   st.libn=await libCount(st.ar);st.bgsrc="stock";
   await rwSet(user,st);const v=quranView(st,plan);return send(id,v.text,v.kb);
 }
-export const isReelCallback=d=>d==="reel:new"||/^(rr|rs|rk|rm|ms|rc):/.test(d);
+export const isReelCallback=d=>d==="reel:new"||/^(rr|rs|rk|rm|ms|rc|rp):/.test(d);
