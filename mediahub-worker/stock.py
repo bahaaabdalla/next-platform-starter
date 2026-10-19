@@ -353,7 +353,8 @@ def photo_pick(theme,n=5):
     if len(idx['items'])<12 or time.time()-idx['ts']>7*86400:
         try:commons_refresh(theme);idx=_photo_index(theme)
         except Exception as e:print('commons refresh',type(e).__name__,str(e)[:100],flush=True)
-    items=[i for i in idx['items'] if (PHOTO_DIR/i['file']).exists()]
+    # only photos a human approved ('ok'); new ones from a refresh wait for review (python stock.py photos kaaba -> sheet)
+    items=[i for i in idx['items'] if i.get('ok') and (PHOTO_DIR/i['file']).exists()]
     if not items:return [],'',0.0
     pick=random.sample(items,min(n,len(items)))
     by=sorted({i['by'] for i in pick if i['by']})[:3]
@@ -367,4 +368,8 @@ if __name__=='__main__':
     elif a[:1]==['sheet']:d,ids=sheet(a[1] if len(a)>1 and a[1]!='-' else None,a[2] if len(a)>2 else None);print(d);print(' '.join(ids))
     elif a[:1]==['set']:print('updated',set_status(a[1],set(a[2:])))
     elif a[:1]==['stats']:print(json.dumps(stats(),ensure_ascii=False,indent=1))
+    elif a[:1]==['photo_ok']:   # photo_ok kaaba <ids...>  approve photos by Commons page id
+        f=PHOTO_DIR/(a[1]+'.json');idx=json.loads(f.read_text());ids=set(a[2:])
+        for i in idx['items']:i['ok']=i.get('ok') or i['id'] in ids
+        f.write_text(json.dumps(idx,ensure_ascii=False));print('approved',sum(1 for i in idx['items'] if i.get('ok')))
     else:print(__doc__)
