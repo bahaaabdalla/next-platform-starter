@@ -77,7 +77,7 @@ def pixabay(query,orient,page):
             # portrait from a landscape source only when the centre crop still has >=1080 px width
             ok=(w>=W and h>=H) if (orient=='h')==(w>=h) else (orient=='v' and h>=1920 and h*9/16>=1080)
             if ok:best=f;break
-        if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v['duration']})
+        if best:out.append({'sharp':max(best.get('width') or 0,best.get('height') or 0)>=3000 or (best.get('height') or 0)>(best.get('width') or 0),'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v['duration']})
     return out
 
 # ---------- fetch + normalise ----------
@@ -216,15 +216,28 @@ def has_people(path,work):return screen(path,work)[0]
 def tone_ok(band,mean):return band<=LUMA_HI and mean>=LUMA_LO
 
 def live_candidates(theme,orient,mindur,strict=False):
+    """Fresh candidates for one reel. Small themes (Kaaba, mosques) have only a handful of clips, so a random later
+    page can be empty: fall back to page 1, then to the non-strict quality rule, then to every query."""
     qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for k,t in THEMES.items() if k not in CROWD_OK for q in t[1]]   # 'mix' = nature only
-    random.shuffle(qs);out=[]
-    for q in qs[:2]:
-        page=random.randint(1,3)
-        for prov in (pexels,pixabay_live):
-            try:out+=[c for c in (prov(q,orient,page,strict) if prov is pixabay_live else prov(q,orient,page)) if c['dur']>=mindur]
-            except Exception as e:print('stock provider',prov.__name__,type(e).__name__,str(e)[:100],flush=True)
-        if len(out)>=8:break
+    random.shuffle(qs)
+    def search(queries,st):
+        out=[]
+        for q in queries:
+            for page in dict.fromkeys((random.randint(1,3),1)):
+                got=[]
+                for prov in (pexels,pixabay_live):
+                    try:got+=[c for c in (prov(q,orient,page,st) if prov is pixabay_live else prov(q,orient,page)) if c['dur']>=mindur]
+                    except Exception as e:print('stock provider',prov.__name__,type(e).__name__,str(e)[:100],flush=True)
+                out+=got
+                if got:break
+            if len(out)>=8:break
+        return out
+    out=search(qs[:2],strict)
+    if len(out)<3 and strict:out+=search(qs[:2],False)
+    if len(out)<3:out+=search(qs[2:],False)
+    seen=set();out=[c for c in out if not (c['id'] in seen or seen.add(c['id']))]
     random.shuffle(out)
+    if strict:out.sort(key=lambda c:not c.get('sharp'))   # sharp (4K / portrait) first, softer ones only as a fallback
     return out
 
 def pixabay_live(query,orient,page,strict=False):
@@ -244,7 +257,7 @@ def pixabay_live(query,orient,page,strict=False):
             # take 4K, or 1080p only when the clip itself is portrait
             if strict and orient=='v' and k=='medium' and (f.get('width') or 0)>(f.get('height') or 0):continue
             best=f;break
-        if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
+        if best:out.append({'sharp':max(best.get('width') or 0,best.get('height') or 0)>=3000 or (best.get('height') or 0)>(best.get('width') or 0),'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
     return out
 
 def live_pick(theme,orient,dur,work,tries=6,hd=False):
