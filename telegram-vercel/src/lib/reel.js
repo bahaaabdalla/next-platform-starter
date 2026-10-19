@@ -12,12 +12,12 @@ let X={};   // {gate,deny,wake,wk,getPlatform,hasWorker} injected by api/index.j
 export const initReel=ctx=>{X=ctx};
 
 // Only reciters with full-surah recordings + timings (one continuous cut, no joins between ayat).
-const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"]];
-const RNAME=Object.fromEntries([...RECITERS,["maher","ماهر المعيقلي"],["dossari","ياسر الدوسري"]]);
+const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"],["qatami","ناصر القطامي"],["dossari","ياسر الدوسري"]];
+const RNAME=Object.fromEntries([...RECITERS,["maher","ماهر المعيقلي"]]);
 // ---------- recitation length estimate (before the reel is made) ----------
 // everyayah serves constant-bitrate MP3s, so length ~= bytes*8/bitrate. The real bitrate is read once per reciter from an
 // MP3 frame header (falls back to the folder's nominal kbps); per-ayah seconds are cached in Redis for good.
-const FOLDER={afasy:["Alafasy_128kbps",128],basit:["Abdul_Basit_Murattal_192kbps",192],husary:["Husary_128kbps",128],minshawi:["Minshawy_Murattal_128kbps",128],sudais:["Abdurrahmaan_As-Sudais_192kbps",192],maher:["MaherAlMuaiqly128kbps",128],dossari:["Yasser_Ad-Dussary_128kbps",128],shatri:["Abu_Bakr_Ash-Shaatree_128kbps",128],shuraym:["Saood_ash-Shuraym_128kbps",128],rifai:["Hani_Rifai_192kbps",192]};
+const FOLDER={afasy:["Alafasy_128kbps",128],basit:["Abdul_Basit_Murattal_192kbps",192],husary:["Husary_128kbps",128],minshawi:["Minshawy_Murattal_128kbps",128],sudais:["Abdurrahmaan_As-Sudais_192kbps",192],maher:["MaherAlMuaiqly128kbps",128],dossari:["Yasser_Ad-Dussary_128kbps",128],shatri:["Abu_Bakr_Ash-Shaatree_128kbps",128],shuraym:["Saood_ash-Shuraym_128kbps",128],rifai:["Hani_Rifai_192kbps",192],qatami:["Nasser_Alqatami_128kbps",128]};
 const ayahUrl=(k,s,a)=>"https://everyayah.com/data/"+FOLDER[k][0]+"/"+String(s).padStart(3,"0")+String(a).padStart(3,"0")+".mp3";
 const BR1=[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320],BR2=[0,8,16,24,32,40,48,56,64,80,96,112,128,144,160];
 export function mp3Kbps(b){
