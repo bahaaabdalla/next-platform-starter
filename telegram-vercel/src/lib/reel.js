@@ -206,7 +206,7 @@ function durRows(st,plan,prefix){
 }
 const THEMES=[["mix","🎲 منوّعة"],["sea","🌊 بحر"],["mountains","🏔 جبال"],["forest","🌲 غابات"],["sky","☁️ سماء وسحاب"],["rain","🌧 مطر"],["water","💧 أنهار وشلالات"],["sunset","🌅 غروب وشروق"],["night","🌌 ليل ونجوم"],["snow","❄️ تلج"],["desert","🏜 صحراء"],["flowers","🌾 زهور وحقول"]];
 const TNAME=Object.fromEntries(THEMES);
-const BGSRC={stock:"🎞 فيديوهات طبيعة",lib:"🖼 من المكتبة",img:"🖼 صور تلقائية"};
+const BGSRC={stock:"🎞 فيديو طبيعة",lib:"🖼 من المكتبة",img:"🖼 صور تلقائية"};
 const bgsrcOf=st=>st.bgsrc==="lib"?"lib":(st.bgsrc==="img"||st.bgsrc==="auto")?"img":"stock";
 const sizeRow=(st,prefix)=>[{text:(st.ar==="9:16"?"✅ ":"")+"📱 9:16 ريلز/شورتس",callback_data:prefix+"a:916"},{text:(st.ar==="16:9"?"✅ ":"")+"🖥 16:9 يوتيوب",callback_data:prefix+"a:169"}];
 function quranView(st,plan){
@@ -218,9 +218,11 @@ function quranView(st,plan){
   if(src==="stock")bgRow.push({text:"الموضوع: "+TNAME[st.theme||"mix"],callback_data:"rs:m"});
   rows.push(bgRow);
   const every=st.bgsec??5;
-  const r3=[{text:"🔄 تتغير: "+(every?"كل "+every+"ث":"ثابتة"),callback_data:"rs:t"}];
-  if(every)r3.push({text:"🧩 عددها: "+(st.bgn||4),callback_data:"rs:n"});
-  rows.push(r3);
+  if(src!=="stock"){   // a stock video plays as one continuous shot; timing only applies to stills
+    const r3=[{text:"🔄 تتغير: "+(every?"كل "+every+"ث":"ثابتة"),callback_data:"rs:t"}];
+    if(every)r3.push({text:"🧩 عددها: "+(st.bgn||4),callback_data:"rs:n"});
+    rows.push(r3);
+  }
   rows.push([{text:"🌑 الفينييت: "+(st.vig?"شغال":"مقفول"),callback_data:"rs:v"},{text:"✍️ التوقيع: "+(st.sig?st.sig.slice(0,14):"مفيش"),callback_data:"rs:g"}]);
   rows.push([{text:"🎬 اعمل الريل",callback_data:"rs:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]);
   const range=st.to?("من آية "+ar(st.frm)+" إلى "+ar(st.to)):("من آية "+ar(st.frm));
@@ -236,7 +238,7 @@ function quranView(st,plan){
     }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
     if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
   }
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديوهات طبيعة حقيقية · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+((st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديو طبيعة حقيقي (Pexels/Pixabay) · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+(bgsrcOf(st)==="stock"?"":(st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
