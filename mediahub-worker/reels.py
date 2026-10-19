@@ -19,6 +19,8 @@ SIG_LAT_FONT=str(HERE/'fonts'/'GreatVibes-Regular.ttf')      # page signature, L
 EVERYAYAH='https://everyayah.com/data/'
 FPS=25;XF=0.8   # crossfade seconds between backgrounds
 SIZES={'9:16':(720,1280),'16:9':(1280,720)}
+HD={'9:16':(1080,1920),'16:9':(1920,1080)}   # paid reels
+def size_of(spec):return (HD if spec.get('hd') else SIZES)[spec['ar']]
 # Full-surah recordings with per-ayah timestamps (quran.com / quranicaudio): one continuous cut, no joins at all.
 QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5}
 QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
@@ -211,30 +213,45 @@ def wrap(draw,text,f,maxw):
  if line:lines.append(line)
  return lines
 
-def layout(W,H):
+def layout(W,H,lines=0):
  # Reels/Shorts safe zone: clear of the top bar, the bottom ~22% (account name + caption) and the right-side buttons.
- if W<H:return dict(size=50,maxw=W-150,lh=100,maxlines=6,cy=int(H*0.45))
- return dict(size=44,maxw=W-260,lh=86,maxlines=4,cy=int(H*0.47))
+ # Sizes are designed at 720p and scaled by k for 1080p. lines=1..3 = short pages (bigger text, one thought at a time).
+ k=min(W,H)/720
+ if W<H:L=dict(size=50,maxw=W-150*k,lh=100,maxlines=6,cy=int(H*0.45))
+ else:L=dict(size=44,maxw=W-260*k,lh=86,maxlines=4,cy=int(H*0.47))
+ if lines:L.update(maxlines=int(lines),size=L['size']*1.12,lh=L['lh']*1.12)
+ L['size']=int(L['size']*k);L['lh']=int(L['lh']*k);L['maxw']=int(L['maxw']);L['k']=k
+ return L
 
-def ayah_pages(text,W,H):
+def ayah_pages(text,W,H,lines=0):
  """Split one ayah into screen pages (lists of lines)."""
  from PIL import Image,ImageDraw
- L=layout(W,H);d=ImageDraw.Draw(Image.new('L',(8,8)));f=font(FONT,L['size'])
- lines=wrap(d,text,f,L['maxw'])
- return [lines[i:i+L['maxlines']] for i in range(0,len(lines),L['maxlines'])] or [[text]]
+ L=layout(W,H,lines);d=ImageDraw.Draw(Image.new('L',(8,8)));f=font(FONT,L['size'])
+ out=wrap(d,text,f,L['maxw']);n=L['maxlines']
+ pages=[out[i:i+n] for i in range(0,len(out),n)] or [[text]]
+ if len(pages)>1 and len(pages[-1])==1 and len(pages[-1][0].split())<=2 and n>1:   # don't leave one or two words alone on a page
+  pages[-2]=pages[-2]+pages[-1];pages.pop()
+ return pages
 
-def text_png(lines,W,H,dest):
+def plate_for(band):
+ """Opacity of a soft dark panel behind the verse on bright footage (0 = none)."""
+ b=float(band or 0);return 0.0 if b<150 else round(min(0.55,0.22+(b-150)/180),2)
+
+def text_png(lines,W,H,dest,lines_mode=0,plate=0.0):
  from PIL import Image,ImageDraw,ImageFilter
- L=layout(W,H);f=font(FONT,L['size']);SW=max(2,L['size']//17)
+ L=layout(W,H,lines_mode);k=L['k'];f=font(FONT,L['size']);SW=max(2,L['size']//17)
  img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
  top=L['cy']-len(lines)*L['lh']//2
  ds=ImageDraw.Draw(sh);dt=ImageDraw.Draw(img)
+ if plate>0:   # bright background: a soft, rounded dark panel behind the lines keeps the verse readable without a black frame
+  wmax=max(dt.textlength(ln,font=f,direction='rtl',language='ar') for ln in lines);px,py=int(34*k),int(18*k)
+  ds.rounded_rectangle((int(W/2-wmax/2-px),top-py,int(W/2+wmax/2+px),top+len(lines)*L['lh']+py),radius=int(28*k),fill=(0,0,0,int(255*plate)))
  for i,ln in enumerate(lines):
   y=top+i*L['lh']
   # soft drop shadow + a dark outline so the verse stays readable on bright or busy footage
-  ds.text((W//2+2,y+4),ln,font=f,fill=(0,0,0,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW+3,stroke_fill=(0,0,0,255))
+  ds.text((W//2+int(2*k),y+int(4*k)),ln,font=f,fill=(0,0,0,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW+int(3*k),stroke_fill=(0,0,0,255))
   dt.text((W//2,y),ln,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW,stroke_fill=(0,0,0,235))
- sh=sh.filter(ImageFilter.GaussianBlur(7))
+ sh=sh.filter(ImageFilter.GaussianBlur(7*k))
  full=Image.alpha_composite(sh,img);box=full.getbbox() or (0,0,2,2)
  box=(max(0,box[0]-4)&~1,max(0,box[1]-4)&~1,min(W,box[2]+4),min(H,box[3]+4))
  full.crop(box).save(dest)
@@ -250,22 +267,22 @@ def chrome_png(W,H,label,wm,dest,vignette=False,logo=None,title=None,sig=None):
  """Static layer: surah title (or a small label) on top, optional page signature under the verses, watermark
  (logo image if provided, else text) at the bottom, optional vignette."""
  from PIL import Image,ImageDraw,ImageFilter
- img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
+ img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0));k=min(W,H)/720
  if vignette:sh=vignette_layer(W,H)
  d=ImageDraw.Draw(img);ds=ImageDraw.Draw(sh)
  if title:
-  tf=font(TITLE_FONT,62 if W<H else 50);y=int(H*(0.10 if W<H else 0.07))
+  tf=font(TITLE_FONT,int((62 if W<H else 50)*k));y=int(H*(0.10 if W<H else 0.07))
   for dd,fill,off in ((ds,(0,0,0,230),3),(d,(255,255,255,245),0)):
-   dd.text((W//2+off,y+off),title,font=tf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=3,stroke_fill=(0,0,0,220))
+   dd.text((W//2+int(off*k),y+int(off*k)),title,font=tf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=int(3*k),stroke_fill=(0,0,0,220))
  elif label:
-  lf=font(UI_FONT,34 if W<H else 30);y=int(H*0.07)
+  lf=font(UI_FONT,int((34 if W<H else 30)*k));y=int(H*0.07)
   for dd,fill,off in ((ds,(0,0,0,200),2),(d,(255,255,255,220),0)):
-   dd.text((W//2+off,y+off),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=2,stroke_fill=(0,0,0,200))
+   dd.text((W//2+int(off*k),y+int(off*k)),label,font=lf,fill=fill,anchor='mt',direction='rtl',language='ar',stroke_width=2,stroke_fill=(0,0,0,200))
  if sig:
-  ar=is_arabic(sig);sf=font(SIG_AR_FONT if ar else SIG_LAT_FONT,(46 if ar else 50) if W<H else (38 if ar else 42))
+  ar=is_arabic(sig);sf=font(SIG_AR_FONT if ar else SIG_LAT_FONT,int(((46 if ar else 50) if W<H else (38 if ar else 42))*k))
   y=int(H*(0.745 if W<H else 0.835));kw=dict(direction='rtl',language='ar') if ar else {}
   for dd,fill,off in ((ds,(0,0,0,220),2),(d,(255,255,255,235),0)):
-   dd.text((W//2+off,y+off),sig,font=sf,fill=fill,anchor='mm',stroke_width=2,stroke_fill=(0,0,0,210),**kw)
+   dd.text((W//2+int(off*k),y+int(off*k)),sig,font=sf,fill=fill,anchor='mm',stroke_width=2,stroke_fill=(0,0,0,210),**kw)
  if wm:
   placed=False
   if logo and Path(logo).exists():
@@ -276,10 +293,10 @@ def chrome_png(W,H,label,wm,dest,vignette=False,logo=None,title=None,sig=None):
      img.alpha_composite(lg,((W-lg.width)//2,H-int(H*0.05)-lg.height));placed=True
    except Exception:placed=False
   if not placed:
-   wf=font(UI_FONT,26);yb=H-int(H*0.06)
+   wf=font(UI_FONT,int(26*k));yb=H-int(H*0.06)
    for dd,fill,off in ((ds,(0,0,0,170),2),(d,(255,255,255,160),0)):
-    dd.text((W//2+off,yb+off),wm,font=wf,fill=fill,anchor='mb')
- Image.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)),img).save(dest)
+    dd.text((W//2+int(off*k),yb+int(off*k)),wm,font=wf,fill=fill,anchor='mb')
+ Image.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3*k)),img).save(dest)
  return dest
 
 def vignette_layer(W,H):
@@ -399,7 +416,7 @@ def video_track(W,H,src,total,dest):
 def dim_for(band):
  """How much to darken a background whose verse area has brightness `band` (0-255): none up to 110, then
  progressively more, so white text keeps contrast on bright footage."""
- return round(max(0.0,min(0.20,(float(band or 0)-110)/300)),3)
+ return round(max(0.0,min(0.12,(float(band or 0)-110)/350)),3)
 
 def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0):
  """Pass 2: text pages + chrome (label, watermark/logo, vignette) over the track, plus the audio."""
@@ -416,7 +433,7 @@ def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0):
  args+=['-filter_complex',';'.join(fl),'-map','[vout]']
  if audio:args+=['-map','%d:a'%(ci+1),'-c:a','aac','-b:a','128k']
  else:args+=['-an']
- args+=['-t','%.3f'%total,'-r',str(FPS)]+x264(24,os.getenv('REEL_PRESET','veryfast'))+['-maxrate','2500k','-bufsize','5000k','-movflags','+faststart',str(out)]
+ args+=['-t','%.3f'%total,'-r',str(FPS)]+x264(24,os.getenv('REEL_PRESET','veryfast'))+['-maxrate','5000k' if W*H>1e6 else '2500k','-bufsize','10000k' if W*H>1e6 else '5000k','-movflags','+faststart',str(out)]
  run(args,int(os.getenv('REEL_TIMEOUT','1200')))
  return out
 
@@ -472,7 +489,7 @@ def backgrounds(W,H,work,n,library=()):
 def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
  """Returns (video_path, info). Raises ValueError for bad input, RuntimeError for failures."""
  s,a,to=validate(spec)
- W,H=SIZES[spec['ar']]
+ W,H=size_of(spec)
  hardcap=float(spec.get('cap',60));maxdur=min(float(spec.get('maxdur',30)),hardcap)
  name,folder=RECITERS[spec['reciter']]
  work.mkdir(parents=True,exist_ok=True)
@@ -490,11 +507,11 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
  pages=[];k=0
  for num,t0,t1 in spans:
   text=ayah_text(s,num).translate(TANWEEN)+' ﴿'+str(num).translate(AR_DIGITS)+'﴾'
-  pg=ayah_pages(text,W,H);weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
+  lm=int(spec.get('lines') or 0);pg=ayah_pages(text,W,H,lm);weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
   t=t0
   for i,(p,wt) in enumerate(zip(pg,weights)):
    end=t1 if i==len(pg)-1 else t+(t1-t0)*wt/tot
-   pages.append([text_png(p,W,H,work/('p%03d.png'%k)),t,min(end,total_v)]);k+=1;t=end
+   pages.append([text_png(p,W,H,work/('p%03d.png'%k),lm,float(spec.get('plate') or 0) if clips else 0.0),t,min(end,total_v)]);k+=1;t=end
  ayat=[a for a in ayat if any(a[0]==x[0] for x in spans)]
  last=ayat[-1][0]
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))

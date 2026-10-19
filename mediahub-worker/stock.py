@@ -33,7 +33,10 @@ THEMES={
  'sunset':('غروب وشروق',['sunset nature','sunrise landscape','golden hour field','sunset sea']),
  'night':('ليل ونجوم',['starry night sky','milky way timelapse','moon night sky','night sky stars']),
  'flowers':('زهور وحقول',['flower field','wheat field wind','meadow flowers','lavender field']),
+ 'kaaba':('الكعبة ومكة',['kaaba','mecca','masjid al haram','makkah']),
+ 'mosque':('مساجد',['mosque','mosque aerial','mosque sunset','mosque minaret']),
 }
+CROWD_OK={'kaaba','mosque'}   # the Haram is never empty: only close-up faces disqualify a clip there
 SIZE={'v':(1080,1920),'h':(1920,1080)}
 
 def load():
@@ -182,10 +185,10 @@ def _frames(path,work,n=5):
         except Exception:pass
     return out
 
-LUMA_HI=float(os.getenv('STOCK_LUMA_HI','168'))   # verse band brighter than this = white text gets lost (snow, white sky, glare)
-LUMA_LO=float(os.getenv('STOCK_LUMA_LO','38'))    # whole frame darker than this = a dull black reel
+LUMA_HI=float(os.getenv('STOCK_LUMA_HI','225'))   # verse band brighter than this = blown out even with a text panel (glare, white-out)
+LUMA_LO=float(os.getenv('STOCK_LUMA_LO','32'))    # whole frame darker than this = a dull black reel
 
-def screen(path,work):
+def screen(path,work,crowd_ok=False):
     """One pass over 5 sampled frames: (people, band, mean). band = brightness (0-255) of the centre area where the
     verses sit; mean = whole frame. People: faces in 3+ frames or a confident person shape (HOG > 1.0) in 2+
     (tuned on real clips: a child close-up hits faces 5/5; mossy rocks give at most 2 stray face hits)."""
@@ -206,25 +209,25 @@ def screen(path,work):
         wt=np.array(wt).ravel()
         if wt.size and float(wt.max())>1.0:phits+=1
     band=float(np.median(bands)) if bands else 0.0;mean=float(np.median(means)) if means else 128.0
-    return (fhits>=3 or phits>=2),band,mean
+    return (fhits>=3 if crowd_ok else (fhits>=3 or phits>=2)),band,mean
 
 def has_people(path,work):return screen(path,work)[0]
 
 def tone_ok(band,mean):return band<=LUMA_HI and mean>=LUMA_LO
 
-def live_candidates(theme,orient,mindur):
-    qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for t in THEMES.values() for q in t[1]]
+def live_candidates(theme,orient,mindur,strict=False):
+    qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for k,t in THEMES.items() if k not in CROWD_OK for q in t[1]]   # 'mix' = nature only
     random.shuffle(qs);out=[]
     for q in qs[:2]:
         page=random.randint(1,3)
         for prov in (pexels,pixabay_live):
-            try:out+=[c for c in prov(q,orient,page) if c['dur']>=mindur]
+            try:out+=[c for c in (prov(q,orient,page,strict) if prov is pixabay_live else prov(q,orient,page)) if c['dur']>=mindur]
             except Exception as e:print('stock provider',prov.__name__,type(e).__name__,str(e)[:100],flush=True)
         if len(out)>=8:break
     random.shuffle(out)
     return out
 
-def pixabay_live(query,orient,page):
+def pixabay_live(query,orient,page,strict=False):
     """Like pixabay() but accepts 1080p landscape for vertical reels too (the reel is 720x1280, a centre crop of 1080p is enough)."""
     if not PIXABAY_KEY:return []
     r=httpx.get('https://pixabay.com/api/videos/',params={'key':PIXABAY_KEY,'q':query,'video_type':'film','per_page':30,'page':page,'safesearch':'true'},timeout=30)
@@ -236,16 +239,20 @@ def pixabay_live(query,orient,page):
         order=('large','medium') if orient=='v' else ('medium','large')
         for k in order:
             f=vids.get(k) or {}
-            if f.get('url') and (f.get('height') or 0)>=1080 and (f.get('size') or 0)<=(70 if k=='large' else 150)*1024*1024:best=f;break
+            if not f.get('url') or (f.get('height') or 0)<1080 or (f.get('size') or 0)>(100 if k=='large' else 150)*1024*1024:continue
+            # a 1080x1920 reel cut from a landscape 1080p clip would be upscaled ~1.8x and look soft: vertical reels
+            # take 4K, or 1080p only when the clip itself is portrait
+            if strict and orient=='v' and k=='medium' and (f.get('width') or 0)>(f.get('height') or 0):continue
+            best=f;break
         if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
     return out
 
-def live_pick(theme,orient,dur,work,tries=6):
+def live_pick(theme,orient,dur,work,tries=6,hd=False):
     """Search, download and screen one video for this reel. Returns (path, source, band) or (None, None, 0).
     Rejects people and clips too bright behind the verses or too dark overall; if every candidate fails only on
     brightness, the least bright one is used (the render darkens it). The file is deleted with the work folder."""
     spare=None
-    for c in live_candidates(theme,orient,min(dur,8))[:tries]:
+    for c in live_candidates(theme,orient,min(dur,8),hd)[:tries]:
         dest=Path(work)/('stock_%s.mp4'%c['id'])
         try:
             with httpx.stream('GET',c['url'],timeout=httpx.Timeout(90,connect=20),follow_redirects=True) as r:
@@ -255,7 +262,7 @@ def live_pick(theme,orient,dur,work,tries=6):
                         n+=len(ch)
                         if n>150*1024*1024:raise RuntimeError('too big')
                         fh.write(ch)
-            people,band,mean=screen(dest,work)
+            people,band,mean=screen(dest,work,theme in CROWD_OK)
             if people:print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);continue
             if not tone_ok(band,mean):
                 print('stock skip (tone) band %.0f mean %.0f'%(band,mean),c['id'],flush=True)

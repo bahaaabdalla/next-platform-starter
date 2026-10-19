@@ -616,8 +616,8 @@ def quran_reel(spec,work,lib,logo,on_stage=None):
   orient='h' if spec.get('ar')=='16:9' else 'v'
   clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
   if not clips:   # live: one fresh, screened video for the whole reel, deleted with the work folder
-   v,src,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work)
-   if v:clips,credit=[v],[src];spec['dim']=reels.dim_for(band)
+   v,src,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work,hd=bool(spec.get('hd')))
+   if v:clips,credit=[v],[src];spec['dim']=reels.dim_for(band);spec['plate']=reels.plate_for(band)
   if clips:lib=[]
  out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=lib,logo=logo,clips=clips)
  cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '')
@@ -628,7 +628,7 @@ def batch_job(rid,spec,work,lib,logo):
  items=spec.get('items') or [];done=0
  talk(spec['chat_id'],'⚡ بدأت أجهّز %d ريلز جاهزة للنشر. هيوصلوا واحد ورا التاني.'%len(items))
  for i,it in enumerate(items):
-  sub=dict(spec);sub.update(it);sub.pop('items',None);sub.pop('dim',None);w=work/('b%d'%i)
+  sub=dict(spec);sub.update(it);sub.pop('items',None);sub.pop('dim',None);sub.pop('plate',None);w=work/('b%d'%i)
   try:
    w.mkdir(parents=True,exist_ok=True);t0=time.time()
    out,info,cap=quran_reel(sub,w,list(lib),logo)
@@ -681,7 +681,7 @@ class ReelReq(BaseModel):
  chat_id:int;user_id:int;source:str='quran'
  surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
  audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
- cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix'
+ cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix';hd:bool=False;lines:int=0
  items:list[dict]=[]   # ready-made pack: [{surah,frm,to,reciter,theme}]
 
 FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
@@ -696,6 +696,7 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  spec['bgs']=[x for x in spec['bgs'] if FID.match(x)][:8]
  if spec['bgsrc'] not in ('','stock','lib','img'):spec['bgsrc']=''
  if spec['theme'] not in stock.THEMES:spec['theme']='mix'
+ spec['lines']=max(0,min(int(spec['lines']),3))
  if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
  if p.source=='quran':
   spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']))
