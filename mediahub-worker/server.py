@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor
 import httpx
-import reels
+import reels,stock
 from fastapi import FastAPI,Header,HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -614,8 +614,13 @@ def reel_job(rid,spec):
   t0=time.time();work.mkdir(parents=True,exist_ok=True)
   lib,logo=reel_assets(spec,work);markup=None
   if quran:
-   out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo)
-   cap=reels.caption(info);markup=continue_markup(spec,info)
+   clips=[];credit=[]
+   if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
+    n=1 if spec.get('bgmode')=='static' else max(2,min(int(spec.get('bgn') or 4),8))
+    clips,credit=stock.pick(spec.get('theme') or 'mix','h' if spec.get('ar')=='16:9' else 'v',n)
+    if clips:lib=[]
+   out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo,clips=clips)
+   cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '');markup=continue_markup(spec,info)
   else:
    talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…')
    src=work/'src';src.mkdir(exist_ok=True)
@@ -647,7 +652,7 @@ class ReelReq(BaseModel):
  chat_id:int;user_id:int;source:str='quran'
  surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
  audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
- cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4
+ cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix'
 
 FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
 @app.post('/reels')
@@ -659,6 +664,8 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  if spec['bgmode'] not in ('every','static','ayah'):spec['bgmode']='every'
  spec['bgsec']=max(2.0,min(float(spec['bgsec']),30.0));spec['bgn']=max(1,min(int(spec['bgn']),8))
  spec['bgs']=[x for x in spec['bgs'] if FID.match(x)][:8]
+ if spec['bgsrc'] not in ('','stock','lib','img'):spec['bgsrc']=''
+ if spec['theme'] not in stock.THEMES:spec['theme']='mix'
  if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
  if p.source=='quran':
   spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']))
@@ -750,6 +757,18 @@ def action(j:str,p:Action,x_worker_secret:str|None=Header(None)):
 @app.post('/stats')
 def stats(x_worker_secret:str|None=Header(None)):
  auth(x_worker_secret);return {'users':len(set(v['user'] for v in jobs.values())),'total_jobs':len(jobs),'completed':sum(v['state']=='complete' for v in jobs.values()),'failed':sum(v['state']=='failed' for v in jobs.values()),'today':sum(v['created']>time.time()-86400 for v in jobs.values()),'warp':WARP['up']}
+
+class StockFetch(BaseModel):
+ theme:str;orient:str='v';n:int=20
+@app.post('/stock/fetch')
+def stock_fetch(p:StockFetch,x_worker_secret:str|None=Header(None)):
+ auth(x_worker_secret)
+ if p.theme not in stock.THEMES or p.orient not in ('v','h'):raise HTTPException(422,'invalid')
+ threading.Thread(target=lambda:print('stock fetch',p.theme,p.orient,'added',stock.fetch(p.theme,p.orient,max(1,min(p.n,60))),flush=True),daemon=True).start()
+ return {'ok':True}
+@app.get('/stock/stats')
+def stock_stats(x_worker_secret:str|None=Header(None)):
+ auth(x_worker_secret);return {'themes':{k:v[0] for k,v in stock.THEMES.items()},'pool':stock.stats()}
 @app.get('/download/{j}')
 def download(j:str,until:int=0,sig:str=''):
  job=jobs.get(j);now=int(time.time())

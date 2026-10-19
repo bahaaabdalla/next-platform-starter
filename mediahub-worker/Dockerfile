@@ -13,7 +13,7 @@ COPY mediahub-worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY mediahub-worker/data ./data
 COPY mediahub-worker/fonts ./fonts
-COPY mediahub-worker/reels.py mediahub-worker/server.py ./
+COPY mediahub-worker/reels.py mediahub-worker/server.py mediahub-worker/stock.py ./
 # Arabic shaping for the reel text needs Pillow's raqm layout; fail the build loudly if it is missing
 RUN python -c "from PIL import features;assert features.check('raqm'),'raqm missing'"
 ENV PORT=10000

@@ -413,6 +413,46 @@ def compose(W,H,track,total,pages,chrome,audio,out):
  run(args,int(os.getenv('REEL_TIMEOUT','1200')))
  return out
 
+
+# ---------- moving video backgrounds (stock pool / Flow clips) ----------
+def norm_clip(src,W,H,dur,dest):
+ """One clip -> exactly WxH, FPS, `dur` seconds (looped if shorter), muted."""
+ run(list(FF)+['-stream_loop','-1','-i',str(src),'-t','%.3f'%dur,'-an',
+  '-vf','scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d,format=yuv420p'%(W,H,W,H,FPS)]+x264(16,'ultrafast')+[str(dest)],300)
+ return dest
+
+def pingpong_unit(src,W,H,work):
+ """A clip forward then backward: loops with no visible jump (slow nature motion hides the reversal)."""
+ fwd=work/'pp_f.mp4';unit=work/'pp_unit.mp4'
+ norm_clip(src,W,H,min(duration(src),12.0),fwd)
+ run(list(FF)+['-i',str(fwd),'-filter_complex','[0:v]split[a][b];[b]reverse,trim=start_frame=1,setpts=PTS-STARTPTS[r];[a][r]concat=n=2:v=1:a=0[v]',
+  '-map','[v]']+x264(16,'ultrafast')+['-an',str(unit)],300)
+ fwd.unlink(missing_ok=True)
+ return unit
+
+def clips_track(W,H,clips,total,every,dest,work):
+ """Real moving clips as the background: each shows `every` seconds and crossfades into the next; the sequence
+ is rendered once as a seamless loop unit (last clip fades back into the first) and looped to the reel length."""
+ clips=list(clips)
+ if every<=0 or len(clips)==1 or total<=every+XF:
+  if duration(clips[0])+0.2>=total:return norm_clip(clips[0],W,H,total,dest)
+  unit=pingpong_unit(clips[0],W,H,work)
+ else:
+  parts=[norm_clip(c,W,H,every+XF+0.05,work/('c%02d.mp4'%i)) for i,c in enumerate(clips+[clips[0]])]
+  args=list(FF);fl=[]
+  for pth in parts:args+=['-i',str(pth)]
+  cur='0:v';off=0.0
+  for i in range(1,len(parts)):
+   off+=every;fl.append('[%s][%d:v]xfade=transition=fade:duration=%.2f:offset=%.3f[x%d]'%(cur,i,XF,off,i));cur='x%d'%i
+  chain=work/'c_chain.mp4';unit=work/'c_unit.mp4'
+  run(args+['-filter_complex',';'.join(fl),'-map','['+cur+']','-r',str(FPS)]+x264(16,'ultrafast')+['-an',str(chain)],int(os.getenv('REEL_TIMEOUT','1200')))
+  run(list(FF)+['-ss','%.3f'%XF,'-i',str(chain),'-t','%.3f'%(len(clips)*every),'-an']+x264(16,'ultrafast')+[str(unit)],300)
+  for pth in parts:pth.unlink(missing_ok=True)
+  chain.unlink(missing_ok=True)
+ run(list(FF)+['-stream_loop','-1','-i',str(unit),'-t','%.3f'%total,'-c','copy',str(dest)],300)
+ unit.unlink(missing_ok=True)
+ return dest
+
 def backgrounds(W,H,work,n,library=()):
  """Stills for the reel: the uploaded background library when available, else generated placeholders."""
  lib=[p for p in library if Path(p).exists()]
@@ -422,7 +462,7 @@ def backgrounds(W,H,work,n,library=()):
  seed=random.randrange(1000)
  return [placeholder_bg(W,H,seed+i,work/('bg%d.jpg'%i)) for i in range(n)]
 
-def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
+def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
  """Returns (video_path, info). Raises ValueError for bad input, RuntimeError for failures."""
  s,a,to=validate(spec)
  W,H=SIZES[spec['ar']]
@@ -454,7 +494,12 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None):
  chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo,title='سورة '+surah_name(s),sig=clean_sig(spec.get('sig')))
  t0=time.time()
  mode=spec.get('bgmode') or 'every'
- if mode=='ayah':
+ bgs=[]
+ if clips:   # stock/Flow video clips: real motion, never deleted (they live in the shared pool)
+  every=0 if mode=='static' else max(3.0,min(float(spec.get('bgsec') or 5),30.0))
+  n=1 if mode=='static' else max(2,min(int(spec.get('bgn') or 4),8))
+  track=clips_track(W,H,list(clips)[:n],total_v,every,work/'track.mp4',work)
+ elif mode=='ayah':
   cuts=scene_cuts(spans,total_v)[:11]
   bgs=backgrounds(W,H,work,len(cuts)+1,library)
   track=stills_track(W,H,bgs,total_v,work/'track.mp4',segs=segments_for_cuts(cuts,total_v))
