@@ -168,7 +168,7 @@ def continuous_recitation(mp3,ts,a,to,maxdur,hardcap,work):
  cut=min((last_end-start)/1000,hardcap)
  total=LEAD+cut+TAIL
  audio=work/'audio.m4a'
- run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-ss','%.3f'%(start/1000),'-t','%.3f'%cut,'-i',str(mp3),
+ run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-ss','%.3f'%(start/1000),'-t','%.3f'%cut,'-i',str(mp3),'-vn',
       '-af','afade=t=in:d=0.03,adelay=%d:all=1,apad=pad_dur=%.2f,afade=t=out:st=%.3f:d=0.6'%(int(LEAD*1000),TAIL,max(0,total-0.6)),
       '-t','%.3f'%total,'-ac','2','-ar','44100','-c:a','aac','-b:a','160k',str(audio)],180)
  spans=[];off=LEAD-start/1000
