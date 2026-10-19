@@ -10,7 +10,9 @@ export const isAdmin=id=>ADMINS().includes(String(id));
 export async function getCfg(){
   return parseCfg(obj(await cmd("HGETALL",P+"cfg")));
 }
-const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50"});
+const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50",
+  // reel plans (editable from the web panel)
+  fDaily:num(o.f_daily,1),fCap:num(o.f_cap,60),fHd:o.f_hd==="1",pDaily:num(o.p_daily,10),pCap:num(o.p_cap,180),packOn:o.pack!=="0",packMax:num(o.pack_max,5)});
 // Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
 export async function load(id){
   const d=today();
@@ -95,7 +97,9 @@ export function reelPlan(id,user,cfg){
   const p={...PLANS[k],key:k,exp:k!=="0"?Number(user.pexp):0};
   if(user.nowm==="1")p.wm=false;
   if(k==="0"&&cfg&&cfg.launch>Date.now()){p.wm=false;p.launch=cfg.launch}
-  if(isAdmin(id)){p.daily=1e9;p.cap=180}
+  if(cfg){p.daily=k==="0"?cfg.fDaily:cfg.pDaily;p.cap=k==="0"?cfg.fCap:cfg.pCap}
+  p.hd=k!=="0"||!!(cfg&&cfg.fHd);
+  if(isAdmin(id)){p.daily=1e9;p.cap=Math.max(180,p.cap);p.hd=true}
   return p;
 }
 export async function reelState(id){
@@ -135,4 +139,10 @@ export async function usage({user,job,kind,bytes}){
     }
   }
   return {charged,bandwidth:newBw};
+}
+
+// Plans text built from the live settings (price, limits) so the bot never shows stale numbers.
+export const mins=s=>s%60?(s<60?s+" ثانية":Math.floor(s/60)+" دقيقة و"+(s%60)+" ثانية"):(s/60===1?"دقيقة":s/60===2?"دقيقتين":s/60+" دقايق");
+export function plansText(c){
+  return "🎬 باقات صانع الريلز\n\n🆓 المجاني: "+(c.fDaily===1?"ريل واحد":c.fDaily+" ريلز")+" يوميًا لحد "+mins(c.fCap)+(c.fHd?" بجودة 1080":"")+".\n💎 الباقة المميزة: "+c.price+" جنيه في الشهر. "+c.pDaily+" ريلز يوميًا، لحد "+mins(c.pCap)+"، بجودة 1080، ومن غير علامة مائية"+(c.packOn?"، وزرار «ريلز جاهزة» ("+(c.packMax>=5?"3 أو 5":"3")+" ريلز بضغطة واحدة)":"")+"، وأولوية في الطابور.";
 }

@@ -72,6 +72,13 @@ const SETTINGS={
   bonus:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=0&&v<=1000))throw Error("رقم غير صحيح");return String(v)},
   maint:v=>v?"1":"0",
   contact:v=>{v=String(v).trim();if(v&&!/^(@[A-Za-z][A-Za-z0-9_]{3,31}|https:\/\/t\.me\/(\+[A-Za-z0-9_-]{6,64}|[A-Za-z][A-Za-z0-9_]{3,31}))$/.test(v))throw Error("حساب التواصل لازم @username أو رابط t.me");return v},
+  f_daily:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=0&&v<=50))throw Error("ريلز المجاني في اليوم من 0 لـ 50");return String(v)},
+  f_cap:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=15&&v<=600))throw Error("مدة المجاني من 15 لـ 600 ثانية");return String(v)},
+  f_hd:v=>v?"1":"0",
+  p_daily:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=1&&v<=100))throw Error("ريلز المشترك في اليوم من 1 لـ 100");return String(v)},
+  p_cap:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=30&&v<=600))throw Error("مدة المشترك من 30 لـ 600 ثانية");return String(v)},
+  pack:v=>v?"1":"0",
+  pack_max:v=>{v=Number(v);if(![3,5].includes(v))throw Error("أقصى عدد للريلز الجاهزة 3 أو 5");return String(v)},
   launchDays:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=0&&v<=60))throw Error("الأيام من 0 لـ 60");return v?String(Date.now()+v*864e5):""},
 };
 async function setSettings(b){

@@ -3,7 +3,7 @@
 // (stacked on top of any remaining days). Nothing is charged by the bot itself.
 import {send,tg} from "./tg.js";
 import {cmd,pipe,obj} from "./redis.js";
-import {P,ADMINS,PLANS,getCfg} from "./quota.js";
+import {P,ADMINS,PLANS,getCfg,mins} from "./quota.js";
 
 const TTL=1800,DAYS=30;
 const k=u=>P+"pay:"+u;
@@ -67,7 +67,8 @@ export async function decideRequest(rid,act,adminId){
     const {price}=await payInfo();
     await pipe([["HSET",P+"u:"+u,"plan","pro","pexp",String(exp)],["HSET",P+"payreq:"+rid,"status","approved","by",String(adminId),"at",String(Date.now()),"exp",String(exp),"amount",String(price)],
       ["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","approved","1"],["HINCRBY",P+"srcpaid",cur.src||"direct","1"],["HINCRBY",P+"rev",new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"}).slice(0,7),String(Number(price)||0)]]);
-    await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n10 ريلز يوميًا، لحد 3 دقايق، من غير علامة مائية. ابدأ من /reel").catch(()=>{});
+    const pc=await getCfg();
+    await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n"+pc.pDaily+" ريلز يوميًا، لحد "+mins(pc.pCap)+"، بجودة 1080 ومن غير علامة مائية"+(pc.packOn?"، وزرار «⚡ ريلز جاهزة» بقى مفتوح لك":"")+". ابدأ من /reel").catch(()=>{});
     note="✅ اتقبل · الاشتراك لحد "+day(exp);
   }else{
     await pipe([["HSET",P+"payreq:"+rid,"status","rejected","by",String(adminId),"at",String(Date.now())],["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","rejected","1"]]);

@@ -3,7 +3,7 @@
 // parallel webhooks never overwrite each other. Settings are one message edited in place.
 import {tg,send} from "./tg.js";
 import {cmd,pipe} from "./redis.js";
-import {P,getCfg,reelState,isAdmin} from "./quota.js";
+import {P,getCfg,reelState,isAdmin,plansText} from "./quota.js";
 import {SURAH,AYAT,parseVerse} from "./quran.js";
 import {planLine} from "./admin.js";
 import {PLANS_TEXT} from "./texts.js";
@@ -97,8 +97,8 @@ const collectKb={inline_keyboard:[[{text:"✅ كمّل",callback_data:"rm:go"},{
 export async function reelStart(id,user){
   const g=await X.gate(user);if(g)return X.deny(id,g);
   const r=await reelState(user);
-  if(r.used>=r.plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+r.used+" من "+r.plan.daily+").\n"+planLine(r.plan)+"\n\n"+PLANS_TEXT+(await contactLine()));
-  if(r.freeFull)return send(id,"⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل لحد 10 ريلز يوميًا بأولوية.\n\n"+PLANS_TEXT+(await contactLine()));
+  if(r.used>=r.plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+r.used+" من "+r.plan.daily+").\n"+planLine(r.plan)+"\n\n"+plansText(await getCfg())+(await contactLine()));
+  if(r.freeFull)return send(id,"⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل ريلز أكتر يوميًا بأولوية.\n\n"+plansText(await getCfg())+(await contactLine()));
   await rwDel(user);await rwSet(user,{step:"pick"});
   return send(id,"🎬 صانع الريلز\nعايز تعمل ريل من إيه؟",pickKb);
 }
@@ -270,23 +270,28 @@ async function libraryFor(st){
 const PASSAGES=[[1,1],[112,1],[113,1],[114,1],[103,1],[94,1],[93,1],[97,1],[55,1],[67,1],[36,1],[2,255],[2,284],[2,285],[2,186],[2,152],[3,190],[3,26],[13,28],[39,53],[40,60],[65,2],[25,63],[59,21],[17,23],[18,1],[19,1],[20,1],[31,12],[24,35],[50,16],[57,20],[89,27],[99,1],[102,1],[108,1],[110,1],[87,1],[78,1],[56,1],[71,10],[14,7],[11,6],[21,87],[12,86],[23,1],[29,69],[33,56],[73,1],[76,1],[90,1],[91,1],[92,1],[95,1],[96,1],[100,1],[101,1],[109,1],[105,1],[106,1],[44,1],[48,1],[49,13],[30,21],[42,30],[64,11],[94,5],[3,173],[9,51],[28,24],[2,201],[3,8],[14,40],[7,23]];
 const PACK_RECITERS=["afasy","basit","husary","minshawi","sudais","shatri","shuraym","rifai","qatami","dossari"];
 const PACK_THEMES=["sea","mountains","forest","sky","rain","water","sunset","night","flowers"];
-export const PACK_SIZES=[3,5];
 const PACK_BG=[["mix","🎲 طبيعة منوّعة"],["kaaba","🕋 الكعبة ومكة"],["mosque","🕌 مساجد"],["sea","🌊 بحر"],["sky","☁️ سماء"],["night","🌌 ليل ونجوم"],["sunset","🌅 غروب"],["forest","🌲 غابات"]];
 const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
-export function packItems(n=3,theme="mix"){
+// dur: a fixed length in seconds for every reel, or "rand" = each reel gets its own length between 20 s and 60 s
+export function packItems(n=3,theme="mix",dur=45,cap=60){
   const ps=shuffle(PASSAGES).slice(0,n),rs=shuffle(PACK_RECITERS),ts=shuffle(PACK_THEMES);
-  return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:theme==="mix"?ts[i%ts.length]:theme}));
+  const len=()=>Math.min(cap,dur==="rand"?20+5*Math.floor(Math.random()*9):Number(dur)||45);
+  return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:theme==="mix"?ts[i%ts.length]:theme,maxdur:len()}));
 }
+const PACK_DURS=[[20,"20ث"],[30,"30ث"],[45,"45ث"],[60,"دقيقة"],["rand","🎲 عشوائي"]];
+const sizesFor=c=>c.packMax>=5?[3,5]:[3];
 const packKey=u=>P+"pack:"+u+":"+new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
-function packView(st){
-  const n=st.pn||3,bg=st.pbg||"mix";
-  return {text:"⚡ ريلز قرآن جاهزة للنشر\n\nكل ريل: آيات مختارة، وقارئ مختلف، وخلفية فيديو حقيقية بجودة 1080، والكتابة سطرين سطرين مع الصوت.\n\n🔢 العدد: "+n+" ريلز\n🖼 الخلفيات: "+Object.fromEntries(PACK_BG)[bg]+"\n\nمرة واحدة في اليوم، والريلز بتتحسب من رصيدك اليومي.",
-    kb:{inline_keyboard:[PACK_SIZES.map(k=>({text:(k===n?"✅ ":"")+k+" ريلز",callback_data:"rp:n"+k})),
+function packView(st,c){
+  const n=st.pn||3,bg=st.pbg||"mix",du=st.pdu??45;
+  return {text:"⚡ ريلز قرآن جاهزة للنشر\n\nكل ريل: آيات مختارة، وقارئ مختلف، وخلفية فيديو حقيقية بجودة 1080، والكتابة سطرين سطرين مع الصوت.\n\n🔢 العدد: "+n+" ريلز\n⏱ مدة كل ريل: "+(du==="rand"?"عشوائية من 20 ثانية لدقيقة (كل ريل مدة مختلفة)":"حوالي "+du+" ثانية (بيقف عند آخر آية كاملة)")+"\n🖼 الخلفيات: "+Object.fromEntries(PACK_BG)[bg]+"\n\nمرة واحدة في اليوم، والريلز بتتحسب من رصيدك اليومي.",
+    kb:{inline_keyboard:[sizesFor(c).map(k=>({text:(k===n?"✅ ":"")+k+" ريلز",callback_data:"rp:n"+k})),
+      PACK_DURS.map(([k,l])=>({text:(String(k)===String(du)?"✅ ":"")+l,callback_data:"rp:d"+k})),
       ...[0,2,4,6].map(i=>PACK_BG.slice(i,i+2).map(([k,l])=>({text:(k===bg?"✅ ":"")+l,callback_data:"rp:b"+k}))),
       [{text:"🚀 ابدأ",callback_data:"rp:go"},{text:"✖️ إلغاء",callback_data:"rs:x"}]]}};
 }
 async function packGuard(user,n,edit){
   const {plan,used}=await reelState(user);
+  if(!(await getCfg()).packOn&&!isAdmin(user)){await edit("⚡ «ريلز جاهزة» متوقفة مؤقتًا. تقدر تعمل ريل بإعداداتك من «📖 ريل قرآن».",{inline_keyboard:[[{text:"📖 ريل قرآن",callback_data:"rk:q"}]]});return null}
   if(plan.key==="0"&&!isAdmin(user)){
     const c=await getCfg();
     await edit("⚡ «ريلز جاهزة» للمشتركين بس.\nبضغطة واحدة بيوصلك 3 أو 5 ريلز قرآن مختلفة: آيات مختارة، وقرّاء مختلفين، وخلفيات فيديو حقيقية بجودة 1080. جاهزين للنشر على طول.\n\n💎 الاشتراك "+c.price+" جنيه في الشهر.",
@@ -297,16 +302,18 @@ async function packGuard(user,n,edit){
 }
 async function reelPack(id,user,edit){
   if(!(await packGuard(user,3,edit)))return;
-  const st={step:"pack",pn:3,pbg:"mix"};await rwSet(user,st);const v=packView(st);return edit(v.text,v.kb);
+  const st={step:"pack",pn:3,pbg:"mix",pdu:45};await rwSet(user,st);const v=packView(st,await getCfg());return edit(v.text,v.kb);
 }
 async function packCallback(id,user,d,st,edit){
   if(!st||st.step!=="pack")return reelPack(id,user,edit);
-  if(d.startsWith("rp:n")){const n=Number(d.slice(4));if(PACK_SIZES.includes(n))st.pn=n}
+  const c=await getCfg();
+  if(d.startsWith("rp:n")){const n=Number(d.slice(4));if(sizesFor(c).includes(n))st.pn=n}
+  else if(d.startsWith("rp:d")){const v=d.slice(4);if(PACK_DURS.some(x=>String(x[0])===v))st.pdu=v==="rand"?"rand":Number(v)}
   else if(d.startsWith("rp:b")){const b=d.slice(4);if(PACK_BG.some(x=>x[0]===b))st.pbg=b}
-  if(d!=="rp:go"){await rwSet(user,st);const v=packView(st);return edit(v.text,v.kb)}
+  if(d!=="rp:go"){await rwSet(user,st);const v=packView(st,c);return edit(v.text,v.kb)}
   const g=await packGuard(user,st.pn,edit);if(!g)return;
   const sig=await sigGet(user),lib=await libraryFor({ar:"9:16"});
-  return submit(id,user,g.plan,g.used,{source:"quran",items:packItems(st.pn,st.pbg),bgsrc:"stock",theme:st.pbg,ar:"9:16",maxdur:Math.min(60,g.plan.cap),vig:false,lines:2,hd:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
+  return submit(id,user,g.plan,g.used,{source:"quran",items:packItems(st.pn,st.pbg,st.pdu??45,Math.min(60,g.plan.cap)),bgsrc:"stock",theme:st.pbg,ar:"9:16",maxdur:Math.min(60,g.plan.cap),vig:false,lines:2,hd:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
     {inline_keyboard:[[{text:"🔁 جرّب تاني",callback_data:"rp:go"}]]},edit,()=>cmd("SET",packKey(user),"1","EX","172800"),"⚡ استلمت طلب الـ "+st.pn+" ريلز. هيوصلوا هنا واحد ورا التاني خلال كام دقيقة.");
 }
 
@@ -314,12 +321,12 @@ async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   if((await cmd("SET",P+"lock:reel:"+user,"1","NX","EX","15"))!=="OK")return;
   const unlock=()=>cmd("DEL",P+"lock:reel:"+user).catch(()=>{});
   const g=await X.gate(user);if(g){await unlock();return X.deny(id,g)}
-  if(used>=plan.daily){await unlock();return edit("⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n\n"+PLANS_TEXT+(await contactLine()))}
-  if(plan.freeFull){await unlock();return edit("⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل لحد 10 ريلز يوميًا بأولوية.\n\n"+PLANS_TEXT+(await contactLine()))}
+  if(used>=plan.daily){await unlock();return edit("⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n\n"+plansText(await getCfg())+(await contactLine()))}
+  if(plan.freeFull){await unlock();return edit("⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل ريلز أكتر يوميًا بأولوية.\n\n"+plansText(await getCfg())+(await contactLine()))}
   if(!X.hasWorker()){await unlock();return send(id,"⚠️ خادم المعالجة غير مربوط.")}
   await edit("⏳ جاري إرسال طلب الريل…");
   if(!(await X.wake(id))){await unlock();return send(id,"⌛ الخادم لسه بيصحى. دوس «اعمل الريل» تاني بعد دقيقة.",retryKb)}
-  const j=await X.wk("/reels",{chat_id:id,user_id:user,cap:plan.cap,wm:plan.wm?"@BMEDIAHUB_BOT":"",hd:plan.key!=="0"||isAdmin(user),...payload});
+  const j=await X.wk("/reels",{chat_id:id,user_id:user,cap:plan.cap,wm:plan.wm?"@BMEDIAHUB_BOT":"",hd:!!plan.hd,...payload});
   await unlock();
   if(j.error)return send(id,"⚠️ خادم المعالجة مش متاح مؤقتًا. جرّب تاني.",retryKb);
   if(j.httpStatus===409)return send(id,"⏳ عندك ريل لسه بيتعمل. استنى يوصلك وبعدين اعمل التاني.");
@@ -401,8 +408,8 @@ async function reelContinue(id,user,d){
   if(!(surah>=1&&surah<=114)||!(frm>=1&&frm<=AYAT[surah-1])||(last&&!(last>=frm&&last<=AYAT[surah-1]))||!RNAME[k])return;
   const g=await X.gate(user);if(g)return X.deny(id,g);
   const {plan,used}=await reelState(user);
-  if(used>=plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n"+planLine(plan)+"\n\n"+PLANS_TEXT+(await contactLine()));
-  if(plan.freeFull)return send(id,"⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل لحد 10 ريلز يوميًا بأولوية.\n\n"+PLANS_TEXT+(await contactLine()));
+  if(used>=plan.daily)return send(id,"⏳ استخدمت ريلز النهاردة ("+used+" من "+plan.daily+").\n"+planLine(plan)+"\n\n"+plansText(await getCfg())+(await contactLine()));
+  if(plan.freeFull)return send(id,"⏳ الريلز المجانية خلصت النهاردة لكل المستخدمين بسبب الضغط. ارجع بكرة، أو اشترك وتعمل ريلز أكتر يوميًا بأولوية.\n\n"+plansText(await getCfg())+(await contactLine()));
   await rwDel(user);
   const st={step:"settings",surah,frm,to:last||null,reciter:k,dur:Math.min(30,plan.cap),ar:o==="169"?"16:9":"9:16",vig:vg!=="0",fit:false,sig:await sigGet(user)};
   st.est=await estimate(st,plan.cap).catch(()=>null);

@@ -1,6 +1,6 @@
 import {tg,send,sleep} from "../lib/tg.js";
 import {redisOn,cmd,pipe} from "../lib/redis.js";
-import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey,reelState} from "../lib/quota.js";
+import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLink,bonusChannels,claimBonus,usage,monthKey,reelState,plansText} from "../lib/quota.js";
 import {planLine} from "../lib/admin.js";
 import {initReel,reelStart,reelCallback,reelMessage,isReelCallback,contactLine} from "../lib/reel.js";
 import {adminCommand,adminCallback} from "../lib/admin.js";
@@ -93,7 +93,7 @@ async function message(m,u){
   if(body.startsWith("/plans")||body.startsWith("/subscribe")){
     if(!redisOn())return send(id,PLANS_TEXT);
     if(body.startsWith("/subscribe")){const g=await gate(user);if(g)return deny(id,g);return payStart(id,user)}
-    const c=await getCfg();return send(id,PLANS_TEXT+(c.paynum||c.payinsta?"":await contactLine()),c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}]]}:undefined);
+    const c=await getCfg();return send(id,plansText(c)+(c.paynum||c.payinsta?"":await contactLine()),c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}]]}:undefined);
   }
   if(body.startsWith("/me")){
     if(!redisOn())return send(id,"ℹ️ نظام الرصيد غير مفعّل حاليًا.");

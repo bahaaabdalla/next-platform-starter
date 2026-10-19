@@ -55,7 +55,9 @@ label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}
 .toggle{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
 .sw{width:46px;height:26px;border-radius:13px;background:var(--line);position:relative;border:0;cursor:pointer;flex:none}
 .sw::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.15s}
-.sw.on{background:var(--bad)}.sw.on::after{inset-inline-start:23px}
+.sw.on{background:var(--ok)}.sw.on.danger{background:var(--bad)}.sw.on::after{inset-inline-start:23px}
+.help{font-size:12.5px;color:var(--mute);margin:5px 2px 2px;line-height:1.7}
+.sticky{position:sticky;bottom:80px;z-index:4;justify-content:center}.sticky .btn{box-shadow:0 4px 14px rgba(0,0,0,.25);padding:12px 28px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{text-align:start;padding:9px 6px;border-bottom:1px solid var(--line)}th{color:var(--mute);font-weight:500;font-size:12px}
 td.num,th.num{text-align:end;font-variant-numeric:tabular-nums}
@@ -204,18 +206,45 @@ async function ads(){
 
 async function settings(){
   const {cfg:c}=await api("settings",{});
-  const F=(k,l,v,t,ph)=>'<label>'+l+'</label><input type="'+(t||"text")+'" id="s_'+k+'" value="'+esc(v)+'" '+(ph?'placeholder="'+ph+'"':"")+(t==="number"||k==="paynum"?' dir="ltr"':"")+'>';
+  // F(key,label,value,help,type,placeholder)
+  const F=(k,l,v,h,t,ph)=>'<label for="s_'+k+'">'+l+'</label><input type="'+(t||"text")+'" id="s_'+k+'" value="'+esc(v)+'" '+(ph?'placeholder="'+ph+'"':"")+(t==="number"||k==="paynum"?' dir="ltr"':"")+'><div class="help">'+h+'</div>';
+  const T=(k,l,on,h,danger)=>'<div class="toggle"><div><b>'+l+'</b><div class="help" style="margin:2px 0 0">'+h+'</div></div><button class="sw '+(on?"on":"")+(danger?" danger":"")+'" data-sw="'+k+'" aria-label="'+esc(l)+'"></button></div>';
   const launchLeft=c.launch>Date.now()?Math.ceil((c.launch-Date.now())/864e5):0;
-  app.innerHTML='<div class="card"><div class="toggle"><div><b>🔴 وضع الصيانة</b><div class="small muted">يوقف التحميل لكل المستخدمين</div></div><button class="sw '+(c.maint?"on":"")+'" id="mt" aria-label="الصيانة"></button></div>'+
-   '<h2>الدفع</h2>'+F("paynum","رقم فودافون كاش",c.paynum,"text","01xxxxxxxxx")+F("payinsta","InstaPay (اختياري)",c.payinsta,"text","name@instapay")+F("price","سعر الاشتراك الشهري (جنيه)",c.price,"number")+F("contact","حساب التواصل/الدعم (اختياري)",c.contact,"text","@support")+
-   '<h2>الريلز المجانية</h2>'+F("launchDays","فترة الإطلاق: كام يوم الريلز المجانية من غير علامة مائية (0 = إيقاف)",launchLeft,"number")+(launchLeft?'<div class="small muted">شغالة دلوقتي لحد '+dd(c.launch)+'</div>':"")+
-   F("freecap","أقصى ريلز مجانية لكل المستخدمين في اليوم (0 = من غير حد)",c.freecap,"number")+
-   '<h2>التحميل المجاني</h2>'+F("welcome","هدية البداية (تحميلات)",c.welcome,"number")+F("daily","الحد اليومي (تحميلات)",c.daily,"number")+F("bonus","مكافأة الاشتراك في قناة (تحميلات)",c.bonus,"number")+
-   '<div class="actions"><button class="btn" id="save">حفظ الإعدادات</button></div></div>'+
-   '<h2>رسالة لكل المستخدمين</h2><div class="card"><textarea id="bc" placeholder="الرسالة اللي هتتبعت لكل مستخدمين البوت…"></textarea><div class="actions"><button class="btn" id="send">إرسال للكل</button></div><div class="small muted" id="bcs"></div></div>'+
-   '<h2>الأمان</h2><div class="card small muted">رابط الدخول ده صالح 30 يوم. لو اتسرّب: ابعت للبوت <b>/web off</b> وكل الروابط القديمة هتتقفل، وبعدها <b>/web</b> لرابط جديد.<div class="actions"><button class="btn ghost" id="out">تسجيل خروج من الجهاز ده</button></div></div>';
-  $("#mt").onclick=async e=>{const on=!e.target.classList.contains("on");if(on&&!confirm("تشغيل الصيانة؟ التحميل هيقف للكل."))return;try{await api("settings",{set:{maint:on}});e.target.classList.toggle("on",on);toast(on?"🔴 الصيانة اشتغلت":"🟢 الصيانة اتقفلت")}catch(x){toast("⚠️ "+x.message)}};
-  $("#save").onclick=async e=>{const set={};["paynum","payinsta","price","contact","launchDays","freecap","welcome","daily","bonus"].forEach(k=>{const v=$("#s_"+k).value.trim();if(k==="paynum"&&!v)return;set[k]=v});
+  const warnCap=c.freecap>0&&c.freecap<50;
+  app.innerHTML=
+   '<div class="card">'+T("maint","🔴 وضع الصيانة",c.maint,"بيوقف التحميل وعمل الريلز لكل المستخدمين (غير الأدمن). استخدمه وقت مشكلة في السيرفر بس.",true)+'</div>'+
+   '<h2>💎 الباقة المدفوعة</h2><div class="card">'+
+     F("price","سعر الاشتراك الشهري (جنيه)",c.price,"المبلغ اللي البوت بيطلبه من المشترك، وبيظهر في /plans وفي رسالة الدفع.","number")+
+     F("p_daily","عدد الريلز في اليوم للمشترك",c.pDaily,"كل مشترك يقدر يعمل كام ريل في اليوم (الريلز الجاهزة بتتحسب منهم).","number")+
+     F("p_cap","أقصى مدة للريل (ثانية)",c.pCap,"أطول ريل المشترك يقدر يطلبه. 180 = 3 دقايق.","number")+
+     T("pack","⚡ زرار «ريلز جاهزة»",c.packOn,"المشترك يدوس مرة واحدة في اليوم وياخد 3 أو 5 ريلز جاهزة للنشر (آيات وقرّاء وخلفيات مختلفة).")+
+     F("pack_max","أقصى عدد للريلز الجاهزة (3 أو 5)",c.packMax,"لو 3 = يظهر اختيار 3 بس. لو 5 = المشترك يختار 3 أو 5.","number")+
+     '<div class="help">💡 المشترك دايمًا: جودة 1080، ومن غير علامة مائية، وأولوية في الطابور.</div></div>'+
+   '<h2>🆓 المجاني</h2><div class="card">'+
+     F("f_daily","عدد الريلز في اليوم لكل مستخدم مجاني",c.fDaily,"كل مستخدم مجاني يقدر يعمل كام ريل في اليوم. (1 = ريل واحد لكل واحد)","number")+
+     F("f_cap","أقصى مدة للريل المجاني (ثانية)",c.fCap,"60 = دقيقة. لو أطول، المجاني مش هيحس بفرق الاشتراك.","number")+
+     T("f_hd","جودة 1080 للمجاني",c.fHd,"مقفولة = المجاني بيطلع 720 (أسرع وأخف على السيرفر)، والـ 1080 ميزة للمشترك.")+
+     F("launchDays","فترة الإطلاق (أيام)",launchLeft,"طول الفترة دي الريلز المجانية بتطلع <b>من غير علامة مائية</b> كهدية. 0 = إيقاف."+(launchLeft?" (شغالة دلوقتي لحد "+dd(c.launch)+")":""),"number")+
+     F("freecap","الحد الإجمالي للريلز المجانية في اليوم (لكل البوت)",c.freecap,"<b>مجموع</b> الريلز المجانية لكل المستخدمين مع بعض في اليوم، عشان ضغط المجاني ميأخرش المشتركين. لما يخلص، المجاني يستنى لبكرة. 0 = من غير حد. المقترح وقت الإعلانات: 300."+(warnCap?'<br><b style="color:var(--bad)">⚠️ القيمة دي صغيرة جدًا: بعد '+c.freecap+' ريل في اليوم كل المستخدمين المجانيين هيتقفل عليهم.</b>':""),"number")+
+   '</div>'+
+   '<h2>📥 تحميل الفيديوهات المجاني</h2><div class="card">'+
+     F("welcome","هدية البداية (تحميلات)",c.welcome,"عدد التحميلات اللي المستخدم الجديد بياخدها أول ما يسجّل، يستخدمها في أي وقت.","number")+
+     F("daily","الحد اليومي (تحميلات)",c.daily,"بعد ما الهدية تخلص: كام تحميل في اليوم لكل مستخدم.","number")+
+     F("bonus","مكافأة الاشتراك في قناة (تحميلات)",c.bonus,"لما الحد اليومي يخلص ويشترك في قناة من قنوات المكافأة، بياخد العدد ده زيادة لباقي اليوم.","number")+
+   '</div>'+
+   '<h2>💳 الدفع</h2><div class="card">'+
+     F("paynum","رقم فودافون كاش",c.paynum,"الرقم اللي المشترك بيحوّل عليه، وبيظهر له في خطوات الاشتراك.","text","01xxxxxxxxx")+
+     F("payinsta","InstaPay (اختياري)",c.payinsta,"لو كتبته، بيظهر كطريقة دفع تانية.","text","name@instapay")+
+     F("contact","حساب الدعم (اختياري)",c.contact,"بيظهر للمستخدم لو طلبه اترفض أو عنده مشكلة.","text","@support")+
+   '</div>'+
+   '<div class="actions sticky"><button class="btn" id="save">💾 حفظ الإعدادات</button></div>'+
+   '<h2>📣 رسالة لكل المستخدمين</h2><div class="card"><textarea id="bc" placeholder="الرسالة اللي هتتبعت لكل مستخدمين البوت…"></textarea><div class="actions"><button class="btn" id="send">إرسال للكل</button></div><div class="small muted" id="bcs"></div></div>'+
+   '<h2>🔒 الأمان</h2><div class="card small muted">رابط الدخول ده صالح 30 يوم. لو اتسرّب: ابعت للبوت <b>/web off</b> وكل الروابط القديمة هتتقفل، وبعدها <b>/web</b> لرابط جديد.<div class="actions"><button class="btn ghost" id="out">تسجيل خروج من الجهاز ده</button></div></div>';
+  const sw={maint:c.maint,pack:c.packOn,f_hd:c.fHd};
+  app.querySelectorAll("[data-sw]").forEach(b=>b.onclick=async()=>{const k=b.dataset.sw,on=!sw[k];
+    if(k==="maint"&&on&&!confirm("تشغيل الصيانة؟ التحميل والريلز هيقفوا للكل."))return;
+    try{await api("settings",{set:{[k]:on}});sw[k]=on;b.classList.toggle("on",on);toast("✅ اتحفظ")}catch(x){toast("⚠️ "+x.message)}});
+  $("#save").onclick=async e=>{const set={};["price","p_daily","p_cap","pack_max","f_daily","f_cap","launchDays","freecap","welcome","daily","bonus","paynum","payinsta","contact"].forEach(k=>{const v=$("#s_"+k).value.trim();if(k==="paynum"&&!v)return;set[k]=v});
     e.target.disabled=true;try{await api("settings",{set});toast("✅ اتحفظ");settings()}catch(x){toast("⚠️ "+x.message);e.target.disabled=false}};
   $("#send").onclick=async e=>{const text=$("#bc").value.trim();if(!text)return toast("اكتب الرسالة الأول");if(!confirm("هتتبعت لكل المستخدمين. متأكد؟"))return;
     e.target.disabled=true;let from=0,ok=0,fail=0;
