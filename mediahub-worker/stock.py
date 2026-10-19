@@ -22,16 +22,16 @@ CLIP_SEC=12.0
 
 # theme -> (Arabic label, search queries). Queries avoid people-heavy subjects; review still decides.
 THEMES={
- 'sea':('بحر',['ocean waves aerial','calm sea horizon','turquoise sea coast','sea waves rocks']),
+ 'sea':('بحر',['ocean waves aerial','calm sea horizon','turquoise sea coast','sea waves rocks','ocean drone 4k','sea sunset waves']),
  'mountains':('جبال',['mountains aerial','snowy mountain peaks','mountain landscape clouds','alps drone']),
  'forest':('غابات',['forest aerial','green forest sunlight','misty forest','pine forest drone']),
- 'sky':('سماء وسحاب',['clouds timelapse','sky clouds sunset','clouds above','blue sky clouds moving']),
+ 'sky':('سماء وسحاب',['clouds timelapse','sky clouds sunset','above the clouds','blue sky clouds moving','sun rays clouds']),
  'rain':('مطر',['rain on window','rain drops leaves','rain nature','raindrops water surface']),
  'desert':('صحراء',['desert dunes aerial','sand dunes','desert sunset','sahara landscape']),
  'snow':('تلج',['snow falling forest','winter landscape snow','snowy mountains','snowfall nature']),
  'water':('أنهار وشلالات',['waterfall nature','river stream forest','mountain river','waterfall aerial']),
  'sunset':('غروب وشروق',['sunset nature','sunrise landscape','golden hour field','sunset sea']),
- 'night':('ليل ونجوم',['starry night sky','milky way timelapse','moon night sky','night sky stars']),
+ 'night':('ليل ونجوم',['starry night sky','milky way timelapse','moon night sky','night sky stars','moon clouds night']),
  'flowers':('زهور وحقول',['flower field','wheat field wind','meadow flowers','lavender field']),
  'kaaba':('الكعبة ومكة',['kaaba','mecca','masjid al haram','makkah']),
  'mosque':('مساجد',['mosque','mosque aerial','mosque sunset','mosque minaret']),
@@ -220,30 +220,33 @@ def live_candidates(theme,orient,mindur,strict=False):
     page can be empty: fall back to page 1, then to the non-strict quality rule, then to every query."""
     qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for k,t in THEMES.items() if k not in CROWD_OK for q in t[1]]   # 'mix' = nature only
     random.shuffle(qs)
-    def search(queries,st):
+    def search(queries,st,ed=False):
         out=[]
         for q in queries:
-            for page in dict.fromkeys((random.randint(1,3),1)):
+            for page in ((1,) if ed else dict.fromkeys((random.randint(1,2),1))):
                 got=[]
                 for prov in (pexels,pixabay_live):
-                    try:got+=[c for c in (prov(q,orient,page,st) if prov is pixabay_live else prov(q,orient,page)) if c['dur']>=mindur]
+                    try:got+=[c for c in (prov(q,orient,page,st,ed) if prov is pixabay_live else ([] if ed else prov(q,orient,page))) if c['dur']>=mindur]
                     except Exception as e:print('stock provider',prov.__name__,type(e).__name__,str(e)[:100],flush=True)
                 out+=got
                 if got:break
-            if len(out)>=8:break
+            if len(out)>=10:break
         return out
-    out=search(qs[:2],strict)
+    # Pixabay's editors' choice (hand-picked, high quality) first, then popular results
+    out=search(qs[:3],strict,True)
+    if len(out)<4:out+=search(qs[:2],strict)
     if len(out)<3 and strict:out+=search(qs[:2],False)
     if len(out)<3:out+=search(qs[2:],False)
     seen=set();out=[c for c in out if not (c['id'] in seen or seen.add(c['id']))]
+    # quality first, but keep variety: shuffle inside tiers (editors' choice > sharp > popular)
     random.shuffle(out)
-    if strict:out.sort(key=lambda c:not c.get('sharp'))   # sharp (4K / portrait) first, softer ones only as a fallback
+    out.sort(key=lambda c:(not c.get('ed'),not (strict and c.get('sharp')),-min(c.get('pop',0),5000)//1000))
     return out
 
-def pixabay_live(query,orient,page,strict=False):
+def pixabay_live(query,orient,page,strict=False,editors=False):
     """Like pixabay() but accepts 1080p landscape for vertical reels too (the reel is 720x1280, a centre crop of 1080p is enough)."""
     if not PIXABAY_KEY:return []
-    r=httpx.get('https://pixabay.com/api/videos/',params={'key':PIXABAY_KEY,'q':query,'video_type':'film','per_page':30,'page':page,'safesearch':'true'},timeout=30)
+    r=httpx.get('https://pixabay.com/api/videos/',params={'key':PIXABAY_KEY,'q':query,'video_type':'film','per_page':30,'page':page,'safesearch':'true','order':'popular',**({'editors_choice':'true'} if editors else {})},timeout=30)
     r.raise_for_status();out=[]
     for v in r.json().get('hits',[]):
         vids=v.get('videos') or {};best=None
@@ -257,7 +260,7 @@ def pixabay_live(query,orient,page,strict=False):
             # take 4K, or 1080p only when the clip itself is portrait
             if strict and orient=='v' and k=='medium' and (f.get('width') or 0)>(f.get('height') or 0):continue
             best=f;break
-        if best:out.append({'sharp':max(best.get('width') or 0,best.get('height') or 0)>=3000 or (best.get('height') or 0)>(best.get('width') or 0),'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
+        if best:out.append({'sharp':max(best.get('width') or 0,best.get('height') or 0)>=3000 or (best.get('height') or 0)>(best.get('width') or 0),'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0),'pop':int(v.get('downloads',0))+20*int(v.get('likes',0)),'ed':editors})
     return out
 
 def live_pick(theme,orient,dur,work,tries=6,hd=False):
