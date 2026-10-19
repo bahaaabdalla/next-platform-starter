@@ -704,7 +704,7 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
    for it in spec['items'][:5]:
     x={'surah':int(it.get('surah') or 0),'frm':int(it.get('frm') or 0),'to':int(it.get('to') or 0) or None,'reciter':str(it.get('reciter') or ''),'theme':str(it.get('theme') or 'mix')}
     if x['theme'] not in stock.THEMES:x['theme']='mix'
-    try:reels.validate(x)
+    try:reels.validate({**spec,**x})
     except Exception:raise HTTPException(422,'invalid reel')
     clean.append(x)
    spec['items']=clean;spec.update({k:clean[0][k] for k in ('surah','frm','to','reciter')})
