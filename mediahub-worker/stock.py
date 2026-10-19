@@ -182,24 +182,35 @@ def _frames(path,work,n=5):
         except Exception:pass
     return out
 
-def has_people(path,work):
-    """True when faces show in 3+ of 5 sampled frames or a confident person shape (HOG > 1.0) in 2+.
-    Tuned on real clips: a child close-up hits faces in 5/5; mossy rocks give at most 2 stray face hits."""
+LUMA_HI=float(os.getenv('STOCK_LUMA_HI','168'))   # verse band brighter than this = white text gets lost (snow, white sky, glare)
+LUMA_LO=float(os.getenv('STOCK_LUMA_LO','38'))    # whole frame darker than this = a dull black reel
+
+def screen(path,work):
+    """One pass over 5 sampled frames: (people, band, mean). band = brightness (0-255) of the centre area where the
+    verses sit; mean = whole frame. People: faces in 3+ frames or a confident person shape (HOG > 1.0) in 2+
+    (tuned on real clips: a child close-up hits faces 5/5; mossy rocks give at most 2 stray face hits)."""
     try:
         import cv2,numpy as np
-    except Exception:return False
+    except Exception:return False,0.0,128.0
     hog=cv2.HOGDescriptor();hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
     faces=[cv2.CascadeClassifier(cv2.data.haarcascades+n) for n in ('haarcascade_frontalface_default.xml','haarcascade_profileface.xml')]
-    fhits=phits=0
+    fhits=phits=0;bands=[];means=[]
     for f in _frames(path,work):
         im=cv2.imread(str(f));f.unlink(missing_ok=True)
         if im is None:continue
-        g=cv2.cvtColor(im,cv2.COLOR_BGR2GRAY)
+        g=cv2.cvtColor(im,cv2.COLOR_BGR2GRAY);h,w=g.shape
+        # vertical reels show the centre of the clip; the verse block sits around 30-62% of the height
+        bands.append(float(np.percentile(g[int(h*.30):int(h*.62),int(w*.30):int(w*.70)],70)));means.append(float(g.mean()))
         if any(len(c.detectMultiScale(g,scaleFactor=1.1,minNeighbors=7,minSize=(36,36))) for c in faces):fhits+=1
-        _,w=hog.detectMultiScale(im,winStride=(8,8),padding=(8,8),scale=1.05)
-        w=np.array(w).ravel()
-        if w.size and float(w.max())>1.0:phits+=1
-    return fhits>=3 or phits>=2
+        _,wt=hog.detectMultiScale(im,winStride=(8,8),padding=(8,8),scale=1.05)
+        wt=np.array(wt).ravel()
+        if wt.size and float(wt.max())>1.0:phits+=1
+    band=float(np.median(bands)) if bands else 0.0;mean=float(np.median(means)) if means else 128.0
+    return (fhits>=3 or phits>=2),band,mean
+
+def has_people(path,work):return screen(path,work)[0]
+
+def tone_ok(band,mean):return band<=LUMA_HI and mean>=LUMA_LO
 
 def live_candidates(theme,orient,mindur):
     qs=list(THEMES.get(theme,THEMES['sea'])[1]) if theme in THEMES else [q for t in THEMES.values() for q in t[1]]
@@ -229,9 +240,11 @@ def pixabay_live(query,orient,page):
         if best:out.append({'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0)})
     return out
 
-def live_pick(theme,orient,dur,work,tries=5):
-    """Search, download and screen one video for this reel. Returns (path, source) or (None, None). The file lives in
-    the reel's work folder and is deleted with it."""
+def live_pick(theme,orient,dur,work,tries=6):
+    """Search, download and screen one video for this reel. Returns (path, source, band) or (None, None, 0).
+    Rejects people and clips too bright behind the verses or too dark overall; if every candidate fails only on
+    brightness, the least bright one is used (the render darkens it). The file is deleted with the work folder."""
+    spare=None
     for c in live_candidates(theme,orient,min(dur,8))[:tries]:
         dest=Path(work)/('stock_%s.mp4'%c['id'])
         try:
@@ -242,11 +255,23 @@ def live_pick(theme,orient,dur,work,tries=5):
                         n+=len(ch)
                         if n>150*1024*1024:raise RuntimeError('too big')
                         fh.write(ch)
-            if has_people(dest,work):print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);continue
-            return dest,c['src']
+            people,band,mean=screen(dest,work)
+            if people:print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);continue
+            if not tone_ok(band,mean):
+                print('stock skip (tone) band %.0f mean %.0f'%(band,mean),c['id'],flush=True)
+                score=max(band-LUMA_HI,LUMA_LO-mean)
+                if spare is None or score<spare[0]:
+                    if spare:spare[1].unlink(missing_ok=True)
+                    spare=(score,dest,c['src'],band)
+                else:dest.unlink(missing_ok=True)
+                continue
+            if spare:spare[1].unlink(missing_ok=True)
+            print('stock ok band %.0f mean %.0f'%(band,mean),c['id'],flush=True)
+            return dest,c['src'],band
         except Exception as e:
             print('stock skip',c['id'],type(e).__name__,str(e)[:100],flush=True);dest.unlink(missing_ok=True)
-    return None,None
+    if spare:return spare[1],spare[2],spare[3]
+    return None,None,0.0
 
 if __name__=='__main__':
     a=sys.argv[1:]

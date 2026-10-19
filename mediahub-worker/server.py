@@ -608,23 +608,48 @@ def continue_markup(spec,info):
  d='rc:%d:%d:%d:%s:%s:%d'%(info['surah'],nxt,int(spec.get('to') or 0),spec['reciter'],'169' if spec.get('ar')=='16:9' else '916',1 if spec.get('vig',True) else 0)
  return {'inline_keyboard':[[{'text':'▶️ كمّل من آية '+str(nxt).translate(reels.AR_DIGITS),'callback_data':d}]]}
 
+def quran_reel(spec,work,lib,logo,on_stage=None):
+ """One Quran reel. Background: stock pool -> one live screened nature video -> library/placeholder stills."""
+ clips=[];credit=[]
+ if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
+  n=1 if spec.get('bgmode')=='static' else max(2,min(int(spec.get('bgn') or 4),8))
+  orient='h' if spec.get('ar')=='16:9' else 'v'
+  clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
+  if not clips:   # live: one fresh, screened video for the whole reel, deleted with the work folder
+   v,src,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work)
+   if v:clips,credit=[v],[src];spec['dim']=reels.dim_for(band)
+  if clips:lib=[]
+ out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=lib,logo=logo,clips=clips)
+ cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '')
+ return out,info,cap
+
+def batch_job(rid,spec,work,lib,logo):
+ """Ready-made pack: several Quran reels in one queue slot, each sent as soon as it is done and charged as one reel."""
+ items=spec.get('items') or [];done=0
+ talk(spec['chat_id'],'⚡ بدأت أجهّز %d ريلز جاهزة للنشر. هيوصلوا واحد ورا التاني.'%len(items))
+ for i,it in enumerate(items):
+  sub=dict(spec);sub.update(it);sub.pop('items',None);sub.pop('dim',None);w=work/('b%d'%i)
+  try:
+   w.mkdir(parents=True,exist_ok=True);t0=time.time()
+   out,info,cap=quran_reel(sub,w,list(lib),logo)
+   tg_video(spec['chat_id'],out,'(%d/%d) '%(i+1,len(items))+cap,info,None)
+   print('batch reel ok',rid,i,'surah',info['surah'],'dur',round(info['duration'],1),'total',round(time.time()-t0,1),flush=True)
+   report({'user':spec['user_id'],'id':rid+'-'+str(i)},'reel',out.stat().st_size);done+=1
+  except Exception as e:print('batch reel failure',rid,i,type(e).__name__,str(e)[:300],flush=True)
+  finally:shutil.rmtree(w,ignore_errors=True)
+ if done<len(items):talk(spec['chat_id'],'⚠️ اتعمل %d من %d. اللي ماتعملش مش متحسوب عليك.'%(done,len(items)))
+ else:talk(spec['chat_id'],'✅ الريلز الـ %d جاهزين للنشر. انشرهم على مدار اليوم عشان كل واحد ياخد فرصته.'%len(items))
+
 def reel_job(rid,spec):
  work=DATA/'reels'/rid;job={'user':spec['user_id'],'id':rid};quran=spec.get('source')=='quran'
  try:
   t0=time.time();work.mkdir(parents=True,exist_ok=True)
   lib,logo=reel_assets(spec,work);markup=None
+  if quran and spec.get('items'):
+   batch_job(rid,spec,work,lib,logo);return
   if quran:
-   clips=[];credit=[]
-   if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
-    n=1 if spec.get('bgmode')=='static' else max(2,min(int(spec.get('bgn') or 4),8))
-    orient='h' if spec.get('ar')=='16:9' else 'v'
-    clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
-    if not clips:   # live: one fresh, screened video for the whole reel, deleted with the work folder
-     v,src=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work)
-     if v:clips,credit=[v],[src]
-    if clips:lib=[]
-   out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'),library=lib,logo=logo,clips=clips)
-   cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '');markup=continue_markup(spec,info)
+   out,info,cap=quran_reel(spec,work,lib,logo,on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'))
+   markup=continue_markup(spec,info)
   else:
    talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…')
    src=work/'src';src.mkdir(exist_ok=True)
@@ -657,6 +682,7 @@ class ReelReq(BaseModel):
  surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
  audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
  cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix'
+ items:list[dict]=[]   # ready-made pack: [{surah,frm,to,reciter,theme}]
 
 FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
 @app.post('/reels')
@@ -673,6 +699,15 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
  if p.source=='quran':
   spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']))
+  if spec['items']:
+   clean=[]
+   for it in spec['items'][:5]:
+    x={'surah':int(it.get('surah') or 0),'frm':int(it.get('frm') or 0),'to':int(it.get('to') or 0) or None,'reciter':str(it.get('reciter') or ''),'theme':str(it.get('theme') or 'mix')}
+    if x['theme'] not in stock.THEMES:x['theme']='mix'
+    try:reels.validate(x)
+    except Exception:raise HTTPException(422,'invalid reel')
+    clean.append(x)
+   spec['items']=clean;spec.update({k:clean[0][k] for k in ('surah','frm','to','reciter')})
   try:reels.validate(spec)
   except Exception:raise HTTPException(422,'invalid reel')
  else:

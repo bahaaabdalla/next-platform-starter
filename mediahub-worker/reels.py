@@ -396,13 +396,19 @@ def video_track(W,H,src,total,dest):
  run(args,int(os.getenv('REEL_TIMEOUT','1200')))
  return dest
 
-def compose(W,H,track,total,pages,chrome,audio,out):
+def dim_for(band):
+ """How much to darken a background whose verse area has brightness `band` (0-255): none up to 110, then
+ progressively more, so white text keeps contrast on bright footage."""
+ return round(max(0.0,min(0.20,(float(band or 0)-110)/300)),3)
+
+def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0):
  """Pass 2: text pages + chrome (label, watermark/logo, vignette) over the track, plus the audio."""
  args=list(FF)+['-i',str(track)]
  for (p,_,_),_,_ in pages:args+=['-i',str(p)]
  args+=['-i',str(chrome)]
  if audio:args+=['-i',str(audio)]
  fl=[];cur='0:v'
+ if dim>0:fl.append('[0:v]eq=brightness=%.3f:contrast=%.3f[dk]'%(-dim,1-dim*0.4));cur='dk'
  for k,((p,px,py),t0,t1) in enumerate(pages):
   fl.append("[%s][%d:v]overlay=%d:%d:eof_action=repeat:enable='between(t,%.3f,%.3f)'[t%d]"%(cur,k+1,px,py,t0,t1,k));cur='t%d'%k
  ci=len(pages)+1
@@ -510,7 +516,7 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
   bgs=backgrounds(W,H,work,n,library)
   track=cycle_track(W,H,bgs,total_v,every,work/'track.mp4')
  for b in bgs:Path(b).unlink(missing_ok=True)
- out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4')
+ out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4',dim=float(spec.get('dim') or 0) if clips else 0.0)
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),
            text=' '.join(ayah_text(s,n).translate(TANWEEN)+' ﴿'+str(n).translate(AR_DIGITS)+'﴾' for n,_,_ in ayat))
  return out,info
