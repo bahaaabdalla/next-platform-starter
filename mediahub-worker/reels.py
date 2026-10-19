@@ -20,7 +20,7 @@ EVERYAYAH='https://everyayah.com/data/'
 FPS=25;XF=0.8   # crossfade seconds between backgrounds
 SIZES={'9:16':(720,1280),'16:9':(1280,720)}
 # Full-surah recordings with per-ayah timestamps (quran.com / quranicaudio): one continuous cut, no joins at all.
-QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4}
+QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5}
 QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
 RECITERS={   # key -> (Arabic name, everyayah folder)
  'afasy':('مشاري راشد العفاسي','Alafasy_128kbps'),
@@ -31,6 +31,8 @@ RECITERS={   # key -> (Arabic name, everyayah folder)
  'maher':('ماهر المعيقلي','MaherAlMuaiqly128kbps'),
  'dossari':('ياسر الدوسري','Yasser_Ad-Dussary_128kbps'),
  'shatri':('أبو بكر الشاطري','Abu_Bakr_Ash-Shaatree_128kbps'),
+ 'shuraym':('سعود الشريم','Saood_ash-Shuraym_128kbps'),
+ 'rifai':('هاني الرفاعي','Hani_Rifai_192kbps'),
 }
 # The bundled text uses the King Fahd complex encoding for "open" tanween; map it to the standard Unicode marks the font draws.
 TANWEEN=str.maketrans({'ٗ':'ࣰ','ٞ':'ࣱ','ٖ':'ࣲ'})
@@ -82,10 +84,11 @@ def fetch_ayah(cache,folder,s,a):
 
 GAP=0.0;LEAD=0.4;TAIL=0.8   # no added pause between ayat (only the reciter's own breath), silence before/after
 def clean_ayah(src,dest):
- """One ayah as plain PCM: edge silence trimmed and 15/40 ms fades, so joining ayat leaves no click or blip.
+ """One ayah as plain PCM keeping the reciter's own breath around it: only silence beyond ~0.3 s before and
+ ~0.45 s after the voice is removed, so joined ayat pause like the real recitation (no glued, cut-off feel).
  (Concatenating the MP3s directly decodes each file's first frame without its bit reservoir, which can blip.)"""
- af=('silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08,areverse,'
-     'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.12,afade=t=in:d=0.02,areverse,afade=t=in:d=0.01')
+ af=('silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,areverse,'
+     'silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.45,afade=t=in:d=0.005,areverse,afade=t=in:d=0.005')
  run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(src),'-af',af,'-ac','2','-ar','44100','-c:a','pcm_s16le',str(dest)],120)
  d=duration(dest)
  if d<0.3:   # trimming ate it (very quiet file): fall back to the untouched recitation
