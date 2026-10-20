@@ -235,7 +235,7 @@ fbq('init','1093807586621158');fbq('track','PageView');
       e.preventDefault();
       var body=JSON.stringify({id:vid,fbc:fbc(),fbp:ck("_fbp"),src:src,url:location.href.split("#")[0].slice(0,300)});
       try{if(!(navigator.sendBeacon&&navigator.sendBeacon("/api/lp",new Blob([body],{type:"application/json"}))))fetch("/api/lp",{method:"POST",headers:{"content-type":"application/json"},body:body,keepalive:true})}catch(x){}
-      try{fbq("trackCustom","OpenBot",{src:src,plan:el.dataset.sub?"pro":"free"})}catch(x){}
+      try{fbq("track","Contact",{content_name:src,content_category:el.dataset.sub?"pro":"free"},{eventID:"ct_"+vid+"_"+Date.now()});fbq("trackCustom","OpenBot",{src:src,plan:el.dataset.sub?"pro":"free"})}catch(x){}
       setTimeout(function(){location.href=link},150);
     });
   });
