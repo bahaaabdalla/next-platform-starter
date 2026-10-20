@@ -79,6 +79,7 @@ const SETTINGS={
   p_cap:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=30&&v<=600))throw Error("مدة المشترك من 30 لـ 600 ثانية");return String(v)},
   pack:v=>v?"1":"0",
   pack_max:v=>{v=Number(v);if(![3,5].includes(v))throw Error("أقصى عدد للريلز الجاهزة 3 أو 5");return String(v)},
+  chan_days:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=-1&&v<=90))throw Error("أيام القناة من -1 لـ 90");return String(v)},
   launchDays:v=>{v=Number(v);if(!(Number.isInteger(v)&&v>=0&&v<=60))throw Error("الأيام من 0 لـ 60");return v?String(Date.now()+v*864e5):""},
 };
 async function setSettings(b){

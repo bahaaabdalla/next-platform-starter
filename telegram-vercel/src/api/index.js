@@ -7,6 +7,7 @@ import {adminCommand,adminCallback} from "../lib/admin.js";
 import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT,onboardHead} from "../lib/texts.js";
 import {payStart,payMessage,payDecision,payAbandon} from "../lib/pay.js";
 import {panelRoute} from "../lib/web.js";
+import {saveVisit,linkVisit} from "../lib/capi.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
@@ -35,23 +36,24 @@ async function exhausted(user,c,a,pending){
 function onboard(c,needTerms){
   const rows=[];if(c.main)rows.push([{text:"📣 اشترك في القناة",url:chanLink(c.main)}]);
   rows.push([{text:needTerms?(c.main?"✅ اشتركت وأوافق على الشروط":"✅ أوافق على الشروط"):"✅ اشتركت، تحقق",callback_data:"go"}]);
+  if(!needTerms)rows.push([{text:"💎 الباقة المميزة",callback_data:"plans"}]);
   const text=needTerms
     ?onboardHead(c)+TERMS+(c.main?"\n\n👇 خطوتين بس: اشترك في "+c.main+"، وبعدها دوس «اشتركت وأوافق على الشروط».":"")
-    :"📣 عشان تكمل لازم تشترك في قناتنا:\n"+c.main+"\nوبعدها دوس «اشتركت، تحقق».";
+    :"📣 عشان تكمل لازم تشترك في قناتنا:\n"+c.main+"\nوبعدها دوس «اشتركت، تحقق».\n\n💎 أو اشترك في الباقة المميزة ("+c.price+" جنيه في الشهر) ومش هتحتاج القناة خالص.";
   return {text,kb:{inline_keyboard:rows}};
 }
+const chanDue=(c,a)=>c.chanDays>=0&&Date.now()-Number(a.user.reg||Date.now())>=c.chanDays*864e5;
 const paidUser=a=>["pro","50","100"].includes(String(a.user.plan||""))&&Number(a.user.pexp)>Date.now();
 async function gate(user,{credit=false,pending=null,chan=true,from=null}={}){
   if(!redisOn()||isAdmin(user))return null;
   try{
-    const {c,a}=await load(user);
+    let {c,a}=await load(user);
     if(a.banned)return {text:"⛔ تم إيقاف حسابك من استخدام البوت."};
     if(c.maint)return {text:"🛠 البوت في صيانة دلوقتي. جرّب بعد شوية."};
-    if(!a.terms){
-      if(!chan){await acceptTerms(user,from,c);return null}   // going straight to pay: registering = accepting the terms (stated in the pay message)
-      await remember(user,pending);return onboard(c,true)}
-    // the mandatory channel is for free users only: subscribers (and anyone on the way to paying) skip it
-    if(chan&&c.main&&!paidUser(a)&&(await member(c.main,user))===false){await remember(user,pending);return onboard(c,false)}
+    // frictionless start: using the bot = accepting the terms (said in the welcome), no terms wall
+    if(!a.terms){await acceptTerms(user,from,c);a=(await load(user)).a}
+    // the mandatory channel is for free users only, and only once they've used the bot for chanDays days (-1 = off)
+    if(chan&&c.main&&!paidUser(a)&&chanDue(c,a)&&(await member(c.main,user))===false){await remember(user,pending);return onboard(c,false)}
     if(credit&&!a.unlimited&&a.remaining<=0)return await exhausted(user,c,a,pending);
     return null;
   }catch(e){console.error("gate",e.message);return null}   // fail-open: never lock users out because Redis is down
@@ -70,7 +72,7 @@ async function resume(id,user){
   if(!redisOn())return;
   try{const url=await cmd("GETDEL",P+"pend:"+user);if(url)await proceed(id,user,url,null)}catch(e){console.error("resume",e.message)}
 }
-const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\n💎 الباقة المميزة ("+c.price+" جنيه/شهر): "+c.pDaily+" ريلز قرآن يوميًا بجودة 1080 من غير علامة مائية"+(c.packOn?" + ريلز جاهزة للنشر بضغطة":"")+". تفاصيلها من زرار «💎 الباقة المميزة» تحت.\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me";
+const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\n💎 الباقة المميزة ("+c.price+" جنيه/شهر): "+c.pDaily+" ريلز قرآن يوميًا بجودة 1080 من غير علامة مائية"+(c.packOn?" + ريلز جاهزة للنشر بضغطة":"")+". تفاصيلها من زرار «💎 الباقة المميزة» تحت.\n\n🎬 وصانع ريلز القرآن ببلاش: "+(c.fDaily===1?"ريل":c.fDaily+" ريلز")+" كل يوم، ابدأ من /reel\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me\n\nباستخدامك للبوت إنت موافق على الشروط: /terms";
 
 initReel({gate,deny,wake,wk,getPlatform,hasWorker:()=>!!(WORKER&&WKEY)});
 
@@ -86,7 +88,10 @@ async function message(m,u){
   if(redisOn()&&!body.startsWith("/")){try{if(await reelMessage(m,id,user,body))return}catch(e){console.error("reel msg",e.message)}}
   if(body.startsWith("/start")){
     // deep links for ads: t.me/BMEDIAHUB_BOT?start=<source>  (…_sub opens the subscription, …_reel opens the reel maker)
-    const src=(body.split(/\s+/)[1]||"").toLowerCase();
+    let src=(body.split(/\s+/)[1]||"").toLowerCase();
+    // from the landing page: <src>_l<10-char visit id> → link the Meta click to this user (Conversions API Lead)
+    const lp=src.match(/^([a-z0-9_]{1,32})_l([a-z0-9]{10})$/);
+    if(lp&&redisOn()){src=lp[1]||"lp";try{await linkVisit(user,lp[2],m.from)}catch(e){console.error("lp",e.message)}}
     if(redisOn()&&/^[a-z0-9_]{1,32}$/.test(src)){const base=src.replace(/(^|_)(sub|reel)$/,"")||src;try{await pipe([["HINCRBY",P+"src",base,"1"],["HSETNX",P+"u:"+user,"src",base]])}catch(e){console.error("src",e.message)}}
     if(redisOn()&&/(^|_)sub$/.test(src)){const g=await gate(user,{chan:false,from:m.from});if(g)return deny(id,g);return payStart(id,user)}
     if(redisOn()&&!isAdmin(user)){const g=await gate(user);if(g)return deny(id,g)}
@@ -198,6 +203,8 @@ async function backupPage(cursor){
 }
 export default async function handler(req,res){const p=(req.url||"").split("?")[0];
 if(req.method==="GET"&&(p==="/"||p==="/index.html")){res.writeHead(200,{"content-type":"text/html;charset=utf-8"});return res.end('<!doctype html><html lang="ar" dir="rtl"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Media hub saver</title><style>body{font-family:system-ui;background:#f4f9f9;display:grid;place-items:center;min-height:100vh;margin:0;color:#1b4965}main{background:white;padding:36px;border-radius:20px;max-width:580px;margin:20px}a{display:inline-block;background:#1b4965;color:white;border-radius:12px;padding:15px 24px;text-decoration:none}p{line-height:1.8}</style><main><h1>🎬 Media hub saver</h1><p>Telegram webhook يعمل على Vercel. تحميل الميديا يحتاج خادم معالجة منفصل.</p><a href="https://t.me/BMEDIAHUB_BOT">افتح بوت تليجرام</a></main></html>')}
+if(req.method==="POST"&&(p==="/api/lp"||p==="/lp")){if(!redisOn())return ret(res,{ok:false});try{const b=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});return ret(res,await saveVisit(b,req))}catch(e){console.error("lp",e.message);return ret(res,{ok:false},500)}}
+if(req.method==="GET"&&(p==="/api/public"||p==="/public")){res.setHeader("cache-control","public, s-maxage=300, stale-while-revalidate=600");let c={};try{if(redisOn())c=await getCfg()}catch(e){}return ret(res,{price:Number(c.price||50),fDaily:c.fDaily??1,fCap:c.fCap??60,pDaily:c.pDaily??10,pCap:c.pCap??180,pack:c.packOn??true,packMax:c.packMax??5,welcome:c.welcome??5,daily:c.daily??2})}
 if(req.method==="GET"&&(p==="/api/health"||p==="/health"))return ret(res,{ok:true,telegramConfigured:!!(process.env.TG_BOT_TOKEN&&SECRET),workerConfigured:!!(WORKER&&WKEY),redisConfigured:redisOn(),platforms:["youtube","tiktok","instagram","facebook"]});
 if(req.method==="GET"&&(p==="/api/activate"||p==="/activate")){try{return ret(res,{ok:true,...await activate()})}catch(e){console.error("activate",e.message);return ret(res,{ok:false,error:"activation_failed"},502)}}
 if(req.method==="POST"&&(p==="/api/usage"||p==="/usage")){if(!WKEY||req.headers["x-worker-secret"]!==WKEY)return ret(res,{ok:false},403);if(!redisOn())return ret(res,{ok:true,skipped:"no_redis"});try{const b=typeof req.body==="string"?JSON.parse(req.body):(req.body||{});return ret(res,{ok:true,...await handleUsage(b)})}catch(e){console.error("usage",e.message);return ret(res,{ok:false},500)}}

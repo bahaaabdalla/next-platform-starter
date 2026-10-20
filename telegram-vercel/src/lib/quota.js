@@ -12,7 +12,7 @@ export async function getCfg(){
 }
 const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50",
   // reel plans (editable from the web panel)
-  fDaily:num(o.f_daily,1),fCap:num(o.f_cap,60),fHd:o.f_hd==="1",pDaily:num(o.p_daily,10),pCap:num(o.p_cap,180),packOn:o.pack!=="0",packMax:num(o.pack_max,5)});
+  fDaily:num(o.f_daily,1),fCap:num(o.f_cap,60),fHd:o.f_hd==="1",pDaily:num(o.p_daily,10),pCap:num(o.p_cap,180),packOn:o.pack!=="0",packMax:num(o.pack_max,5),chanDays:num(o.chan_days,-1)});
 // Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
 export async function load(id){
   const d=today();

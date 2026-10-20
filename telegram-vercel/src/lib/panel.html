@@ -227,6 +227,9 @@ async function settings(){
      F("launchDays","فترة الإطلاق (أيام)",launchLeft,"طول الفترة دي الريلز المجانية بتطلع <b>من غير علامة مائية</b> كهدية. 0 = إيقاف."+(launchLeft?" (شغالة دلوقتي لحد "+dd(c.launch)+")":""),"number")+
      F("freecap","الحد الإجمالي للريلز المجانية في اليوم (لكل البوت)",c.freecap,"<b>مجموع</b> الريلز المجانية لكل المستخدمين مع بعض في اليوم، عشان ضغط المجاني ميأخرش المشتركين. لما يخلص، المجاني يستنى لبكرة. 0 = من غير حد. المقترح وقت الإعلانات: 300."+(warnCap?'<br><b style="color:var(--bad)">⚠️ القيمة دي صغيرة جدًا: بعد '+c.freecap+' ريل في اليوم كل المستخدمين المجانيين هيتقفل عليهم.</b>':""),"number")+
    '</div>'+
+   '<h2>📣 القناة الإجبارية</h2><div class="card">'+
+     F("chan_days","القناة الإجبارية للمجاني تبدأ بعد كام يوم",c.chanDays,"<b>-1 = مقفولة</b> (أي حد يجرّب البوت من غير ما يشترك في القناة). 0 = من أول استخدام. 3 = المستخدم المجاني يستخدم البوت 3 أيام براحته، وبعدها يُطلب منه الاشتراك في القناة. المشتركين في الباقة عمرهم ما بيتطلب منهم.","number")+
+   '</div>'+
    '<h2>📥 تحميل الفيديوهات المجاني</h2><div class="card">'+
      F("welcome","هدية البداية (تحميلات)",c.welcome,"عدد التحميلات اللي المستخدم الجديد بياخدها أول ما يسجّل، يستخدمها في أي وقت.","number")+
      F("daily","الحد اليومي (تحميلات)",c.daily,"بعد ما الهدية تخلص: كام تحميل في اليوم لكل مستخدم.","number")+
@@ -244,7 +247,7 @@ async function settings(){
   app.querySelectorAll("[data-sw]").forEach(b=>b.onclick=async()=>{const k=b.dataset.sw,on=!sw[k];
     if(k==="maint"&&on&&!confirm("تشغيل الصيانة؟ التحميل والريلز هيقفوا للكل."))return;
     try{await api("settings",{set:{[k]:on}});sw[k]=on;b.classList.toggle("on",on);toast("✅ اتحفظ")}catch(x){toast("⚠️ "+x.message)}});
-  $("#save").onclick=async e=>{const set={};["price","p_daily","p_cap","pack_max","f_daily","f_cap","launchDays","freecap","welcome","daily","bonus","paynum","payinsta","contact"].forEach(k=>{const v=$("#s_"+k).value.trim();if(k==="paynum"&&!v)return;set[k]=v});
+  $("#save").onclick=async e=>{const set={};["price","p_daily","p_cap","pack_max","f_daily","f_cap","chan_days","launchDays","freecap","welcome","daily","bonus","paynum","payinsta","contact"].forEach(k=>{const v=$("#s_"+k).value.trim();if(k==="paynum"&&!v)return;set[k]=v});
     e.target.disabled=true;try{await api("settings",{set});toast("✅ اتحفظ");settings()}catch(x){toast("⚠️ "+x.message);e.target.disabled=false}};
   $("#send").onclick=async e=>{const text=$("#bc").value.trim();if(!text)return toast("اكتب الرسالة الأول");if(!confirm("هتتبعت لكل المستخدمين. متأكد؟"))return;
     e.target.disabled=true;let from=0,ok=0,fail=0;
