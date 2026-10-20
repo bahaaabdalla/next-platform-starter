@@ -8,6 +8,7 @@ import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT,onboardHead} from "../lib/texts.js";
 import {payStart,payMessage,payDecision,payAbandon} from "../lib/pay.js";
 import {panelRoute} from "../lib/web.js";
 import {saveVisit,linkVisit} from "../lib/capi.js";
+import {trackLp} from "../lib/lpa.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
@@ -203,6 +204,7 @@ async function backupPage(cursor){
 }
 export default async function handler(req,res){const p=(req.url||"").split("?")[0];
 if(req.method==="GET"&&(p==="/"||p==="/index.html")){res.writeHead(200,{"content-type":"text/html;charset=utf-8"});return res.end('<!doctype html><html lang="ar" dir="rtl"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Media hub saver</title><style>body{font-family:system-ui;background:#f4f9f9;display:grid;place-items:center;min-height:100vh;margin:0;color:#1b4965}main{background:white;padding:36px;border-radius:20px;max-width:580px;margin:20px}a{display:inline-block;background:#1b4965;color:white;border-radius:12px;padding:15px 24px;text-decoration:none}p{line-height:1.8}</style><main><h1>🎬 Media hub saver</h1><p>Telegram webhook يعمل على Vercel. تحميل الميديا يحتاج خادم معالجة منفصل.</p><a href="https://t.me/BMEDIAHUB_BOT">افتح بوت تليجرام</a></main></html>')}
+if(req.method==="POST"&&p==="/api/lp/ev"){if(!redisOn())return ret(res,{ok:false});try{const b=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});return ret(res,await trackLp(b))}catch(e){console.error("lpev",e.message);return ret(res,{ok:false},500)}}
 if(req.method==="POST"&&(p==="/api/lp"||p==="/lp")){if(!redisOn())return ret(res,{ok:false});try{const b=typeof req.body==="string"?JSON.parse(req.body||"{}"):(req.body||{});return ret(res,await saveVisit(b,req))}catch(e){console.error("lp",e.message);return ret(res,{ok:false},500)}}
 if(req.method==="GET"&&(p==="/api/public"||p==="/public")){res.setHeader("cache-control","public, s-maxage=300, stale-while-revalidate=600");let c={};try{if(redisOn())c=await getCfg()}catch(e){}return ret(res,{price:Number(c.price||50),fDaily:c.fDaily??1,fCap:c.fCap??60,pDaily:c.pDaily??10,pCap:c.pCap??180,pack:c.packOn??true,packMax:c.packMax??5,welcome:c.welcome??5,daily:c.daily??2})}
 if(req.method==="GET"&&(p==="/api/health"||p==="/health"))return ret(res,{ok:true,telegramConfigured:!!(process.env.TG_BOT_TOKEN&&SECRET),workerConfigured:!!(WORKER&&WKEY),redisConfigured:redisOn(),platforms:["youtube","tiktok","instagram","facebook"]});

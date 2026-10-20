@@ -202,6 +202,28 @@ async function ads(){
   const draw=()=>{const c=($("#code").value||"").toLowerCase().replace(/[^a-z0-9_]/g,"");$("#links").innerHTML=c?[["الرابط العادي",c],["يفتح الاشتراك على طول",c+"_sub"],["يفتح صانع الريلز على طول",c+"_reel"]].map(([l,v])=>'<label>'+l+'</label><div class="copy"><code>'+link(v)+'</code><button class="btn ghost" data-c="'+link(v)+'">نسخ</button></div>').join(""):"";
     $("#links").querySelectorAll("[data-c]").forEach(b=>b.onclick=()=>{navigator.clipboard?.writeText(b.dataset.c).then(()=>toast("اتنسخ ✅"),()=>toast(b.dataset.c))})};
   $("#code").oninput=draw;draw();
+  app.insertAdjacentHTML("afterbegin",'<h2 style="margin-top:4px">📈 صفحة الهبوط</h2><div class="seg" id="lpd"><button data-d="1">النهارده</button><button data-d="7" class="on">7 أيام</button><button data-d="30">30 يوم</button></div><div id="lpa"><div class="card muted">جاري التحميل…</div></div>');
+  app.querySelectorAll("#lpd button").forEach(b=>b.onclick=()=>{app.querySelectorAll("#lpd button").forEach(x=>x.classList.toggle("on",x===b));lpBlock(+b.dataset.d)});
+  lpBlock(7);
+}
+const LPF=[["view","زاروا الصفحة"],["t15","فضلوا 15 ثانية"],["t30","فضلوا 30 ثانية"],["sec:how","وصلوا «بيشتغل إزاي»"],["sec:proof","وصلوا للنتايج"],["sec:price","وصلوا للأسعار"],["sec:faq","وصلوا للأسئلة"],["click","داسوا زرار البوت"],["lead","دخلوا البوت فعلًا"],["buy","اشتركوا"]];
+const LPG=s=>/^fb_new/.test(s)?"B · يبدأ صفحة":/^fb_pro/.test(s)?"A · صناع محتوى":/^fb_all/.test(s)?"ALL · شرح عام":"مباشر / تاني";
+async function lpBlock(days){
+  const box=$("#lpa");if(!box)return;
+  let d;try{d=await api("lpstats",{days})}catch(e){box.innerHTML='<div class="card">⚠️ '+esc(e.message)+'</div>';return}
+  if(!d.rows.length){box.innerHTML='<div class="card"><div class="empty">لسه مفيش زيارات للصفحة في الفترة دي</div></div>';return}
+  const add=(a,r)=>{for(const k in r)if(k!=="src")a[k]=(a[k]||0)+r[k];return a};
+  const groups={};d.rows.forEach(r=>{const g=LPG(r.src);groups[g]=add(groups[g]||{},r)});
+  const all=d.rows.reduce((a,r)=>add(a,r),{});
+  const pc=(x,v)=>v?Math.round((x||0)/v*100):0;
+  const funnel=(t,g)=>{const v=g.view||0;return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:baseline"><b>'+esc(t)+'</b><span class="muted small">'+fmt(v)+' زيارة</span></div>'+
+    LPF.map(([k,l])=>{const n=k==="click"?(g.click||0)+(g.click_pro||0):(g[k]||0),p=pc(n,v);return '<div style="margin-top:8px"><div style="display:flex;justify-content:space-between;font-size:13px"><span>'+l+'</span><span><b>'+fmt(n)+'</b> <span class="muted">· '+p+'%</span></span></div><div style="height:7px;border-radius:4px;background:var(--line);margin-top:3px;overflow:hidden"><div style="height:100%;width:'+Math.min(100,p)+'%;background:var(--brand);border-radius:4px"></div></div></div>'}).join("")+'</div>'};
+  const max=Math.max(1,...d.daily.map(x=>x.views));
+  const spark='<div class="card" style="margin-bottom:10px"><b>الزيارات يوم بيوم</b><div style="display:flex;direction:ltr;align-items:flex-end;gap:3px;height:70px;margin-top:10px">'+d.daily.map(x=>'<div title="'+x.day+': '+x.views+'" style="flex:1;background:var(--brand);opacity:.85;border-radius:3px 3px 0 0;height:'+Math.max(2,x.views/max*100)+'%"></div>').join("")+'</div><div class="small muted" style="display:flex;justify-content:space-between;direction:ltr"><span>'+d.daily[0].day.slice(5)+'</span><span>'+d.daily[d.daily.length-1].day.slice(5)+'</span></div></div>';
+  const table='<div class="card"><b>كل كود لوحده</b><table style="margin-top:8px"><thead><tr><th>الكود</th><th class="num">زيارات</th><th class="num">فضلوا 30ث</th><th class="num">الأسعار</th><th class="num">الزرار</th><th class="num">البوت</th><th class="num">اشتركوا</th></tr></thead><tbody>'+
+    d.rows.map(r=>{const v=r.view||0;return '<tr><td><b>'+esc(r.src)+'</b></td><td class="num">'+fmt(v)+'</td><td class="num">'+pc(r.t30,v)+'%</td><td class="num">'+pc(r["sec:price"],v)+'%</td><td class="num">'+pc((r.click||0)+(r.click_pro||0),v)+'%</td><td class="num">'+fmt(r.lead||0)+'</td><td class="num">'+fmt(r.buy||0)+'</td></tr>'}).join("")+'</tbody></table></div>';
+  box.innerHTML=spark+funnel("كل الصفحات",all)+Object.entries(groups).sort((a,b)=>(b[1].view||0)-(a[1].view||0)).map(([g,v])=>funnel(g,v)).join("")+table+
+    '<p class="small muted">النِسَب من عدد الزيارات. «دخلوا البوت» = داسوا Start بعد ما جم من الصفحة.</p>';
 }
 
 async function settings(){

@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import {cmd,pipe,obj} from "./redis.js";
 import {P} from "./quota.js";
+import {countLp} from "./lpa.js";
 
 const PIXEL=process.env.META_PIXEL_ID||"1093807586621158";
 const TOKEN=process.env.META_CAPI_TOKEN||"";
@@ -43,6 +44,7 @@ export async function linkVisit(user,lpid,from){
   const v=obj(await cmd("HGETALL",P+"lp:"+lpid));if(!v.ts)return;
   const first=await cmd("HSETNX",P+"u:"+user,"lpid",lpid);
   if(first!==1&&first!=="1")return;   // already linked: one Lead per user
+  try{await countLp(v.src,"lead")}catch(e){}
   const keep=["fbc","fbp","ip","ua"].flatMap(k=>v[k]?["m_"+k,v[k]]:[]);
   if(keep.length)await cmd("HSET",P+"u:"+user,...keep);
   const fn=String(from?.first_name||"").replace(/[^\p{L}]/gu,"");
@@ -52,8 +54,9 @@ export async function linkVisit(user,lpid,from){
 
 // approved payment → Purchase (value in EGP); the sender phone from the request improves matching
 export async function purchase(user,amount,phone,rid){
-  if(!TOKEN)return;
   const u=obj(await cmd("HGETALL",P+"u:"+user));
+  if(u.lpid)try{await countLp(u.src,"buy")}catch(e){}
+  if(!TOKEN)return;
   const v={fbc:u.m_fbc,fbp:u.m_fbp,ip:u.m_ip,ua:u.m_ua};
   let ph=String(phone||"").replace(/\D/g,"");if(/^01\d{9}$/.test(ph))ph="2"+ph;
   await post([{event_name:"Purchase",event_time:Math.floor(Date.now()/1000),event_id:"buy_"+rid,action_source:"website",

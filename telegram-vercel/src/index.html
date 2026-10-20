@@ -10,84 +10,107 @@
 <meta property="og:image" content="/lp/hero.webp">
 <meta name="theme-color" content="#F3F1EC">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Alexandria:wght@800&family=Cairo:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Alexandria:wght@700;800&family=IBM+Plex+Sans+Arabic:wght@400;600;700&family=Aref+Ruqaa:wght@700&display=swap" rel="stylesheet">
 <link rel="preload" as="image" href="/lp/demo_kaaba_photos.webp">
 <style>
-:root{--bg:#F3F1EC;--ink:#151515;--mute:#6f6a62;--line:#e4dfd6;--or:#F2601F;--or2:#FF8A2A;--h:"Alexandria",system-ui,sans-serif;--b:"Cairo",system-ui,sans-serif}
+:root{--bg:#fff;--surf:#fff;--ink:#0b0b0c;--mute:#6b6b70;--line:#ececee;--acc:#F2601F;--acc2:#FF7A2E;--btnInk:#fff;--alt:#f6f6f7;--darkbg:#0b0b0c;--darkink:#f5f5f4;--darkmute:#a1a1a6;--h:"Alexandria",system-ui,sans-serif;--b:"IBM Plex Sans Arabic",system-ui,sans-serif;--deco:var(--h);--r:16px}
+:root[data-v="b"]{--bg:#0b0b0c;--surf:#151517;--ink:#f5f5f4;--mute:#9b9ba1;--line:#26262a;--alt:#111113;--darkbg:#151517;--darkink:#f5f5f4;--darkmute:#9b9ba1}
+:root[data-v="c"]{--bg:#f7f3ea;--surf:#fffdf8;--ink:#0f2a22;--mute:#5d6b63;--line:#e5ddcc;--acc:#0f5132;--acc2:#0f5132;--alt:#efe8d8;--darkbg:#0f2a22;--darkink:#f7f3ea;--darkmute:#b9c4bc;--gold:#b8924a;--deco:"Aref Ruqaa",serif}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
-body{background:var(--bg);color:var(--ink);font:500 17px/1.8 var(--b);padding-bottom:86px}
+body{background:var(--bg);color:var(--ink);font:400 17px/1.85 var(--b);padding-bottom:86px;-webkit-font-smoothing:antialiased}
 img,video{display:block;max-width:100%;height:auto}
-.w{max-width:1040px;margin-inline:auto;padding-inline:20px}
-h1,h2,h3{font-family:var(--h);font-weight:800;line-height:1.3}
-h1{font-size:clamp(32px,8.6vw,58px)}
-h2{font-size:clamp(25px,6.4vw,38px);margin-bottom:18px}
-h3{font-size:19px;margin-bottom:2px}
-.acc{color:var(--or)}
-.eye{font:700 14px var(--b);color:var(--or);margin-bottom:6px}
+.w{max-width:1040px;margin-inline:auto;padding-inline:22px}
+h1,h2,h3{font-family:var(--h);font-weight:700;line-height:1.25;letter-spacing:0}
+h1{font-size:clamp(34px,9vw,64px);font-weight:800;line-height:1.18}
+h2{font-size:clamp(26px,6.4vw,40px);margin-bottom:20px}
+h3{font-size:18px;margin-bottom:2px}
+.acc{color:var(--acc)}
+.deco{font-family:var(--deco);font-weight:700}
+:root[data-v="c"] h1 .deco{color:var(--gold);font-size:1.12em}
+.eye{font:600 13px var(--b);letter-spacing:.02em;color:var(--mute);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.eye:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--acc)}
 .mute{color:var(--mute)}
-section{padding-block:44px}
-.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:420px;background:var(--or);background:linear-gradient(90deg,var(--or),var(--or2));color:#fff;border-radius:18px;padding:17px 22px;font:800 19px var(--h);text-decoration:none;box-shadow:0 12px 26px rgba(242,96,31,.3)}
-.btn svg{width:22px;height:22px;flex:none}
-.btn.line{background:#fff;color:var(--ink);border:2px solid var(--ink);box-shadow:none}
-.small{font-size:14px;color:var(--mute);margin-top:9px}
-.top{display:flex;align-items:center;gap:10px;padding-block:14px;font:800 17px var(--h);direction:ltr;justify-content:flex-end}
-.top img{width:34px;height:34px;border-radius:10px}
-.hero{padding-block:4px 36px}
-.hero .w{display:grid;gap:26px}
-.sub{font-size:18px;color:#3a3732;margin-block:12px 20px;max-width:34ch}
-.nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px;max-width:420px}
-.nums div{background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 4px;text-align:center;line-height:1.35}
-.nums b{display:block;font:800 22px var(--h);color:var(--or)}
-.nums span{font-size:13px;color:var(--mute)}
-.phone{width:min(260px,70vw);aspect-ratio:9/16;border-radius:34px;background:#111 center/cover;border:9px solid #111;overflow:hidden;margin-inline:auto;box-shadow:0 30px 60px rgba(0,0,0,.22)}
+section{padding-block:56px;border-top:1px solid var(--line)}
+section.hero{border-top:0}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:400px;background:var(--acc);color:var(--btnInk);border-radius:14px;padding:17px 22px;font:700 18px var(--h);text-decoration:none;transition:transform .15s}
+.btn:active{transform:scale(.98)}
+.btn svg{width:20px;height:20px;flex:none}
+.btn.line{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.small{font-size:13.5px;color:var(--mute);margin-top:10px}
+/* header */
+header{border-bottom:1px solid var(--line)}
+header .w{display:flex;align-items:center;justify-content:space-between;height:60px}
+.wm{font:800 17px var(--h);direction:ltr;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.wm i{width:9px;height:9px;border-radius:2px;background:var(--acc);transform:rotate(45deg)}
+.hlink{font:600 14px var(--b);color:var(--ink);text-decoration:none;border-bottom:1.5px solid var(--acc);padding-bottom:1px}
+/* hero */
+.hero{padding-block:34px 48px}
+.hero .w{display:grid;gap:34px}
+.sub{font-size:18px;color:var(--mute);margin-block:16px 26px;max-width:36ch}
+.nums{display:grid;grid-template-columns:repeat(3,1fr);margin-top:30px;max-width:400px;border-top:1px solid var(--line)}
+.nums div{padding-top:12px;line-height:1.35}
+.nums div+div{border-inline-start:1px solid var(--line);padding-inline-start:14px}
+.nums b{display:block;font:800 24px var(--h);color:var(--ink)}
+.nums span{font-size:12.5px;color:var(--mute)}
+.phone{width:min(250px,66vw);aspect-ratio:9/16;border-radius:30px;background:#111 center/cover;border:7px solid #0b0b0c;overflow:hidden;margin-inline:auto;box-shadow:0 40px 80px -20px rgba(0,0,0,.35)}
+:root[data-v="b"] .phone{border-color:#2a2a2e;box-shadow:0 0 0 1px #2a2a2e,0 40px 120px -20px rgba(242,96,31,.35)}
 .phone video{width:100%;height:100%;object-fit:cover}
-.steps{display:grid;gap:10px}
-.step{display:flex;gap:14px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 16px}
-.step i{flex:none;width:40px;height:40px;border-radius:12px;background:var(--ink);color:#fff;display:grid;place-items:center;font:800 19px var(--h);font-style:normal}
-.step:last-child i{background:var(--or)}
+/* steps: hairline index */
+.steps{display:grid;border-top:1px solid var(--line)}
+.step{display:grid;grid-template-columns:44px 1fr;gap:12px;padding:16px 0;border-bottom:1px solid var(--line)}
+.step i{font:700 13px var(--h);font-style:normal;color:var(--acc);padding-top:4px;direction:ltr;text-align:right}
 .step p{font-size:15px;color:var(--mute);line-height:1.6}
-.gets{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
-.gets span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:4px 14px;font-size:15px;font-weight:700}
-.dark{background:#121212;color:#fff}
-.dark .mute{color:#bdb6ab}
+.gets{margin-top:22px;font-size:15px;color:var(--mute)}
+.gets b{color:var(--ink);font-weight:600}
+/* proof */
+.dark{background:var(--darkbg);color:var(--darkink);border-top:0}
+.dark .mute{color:var(--darkmute)}
+.dark .eye{color:var(--darkmute)}
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:560px;margin-inline:auto}
-.tiles figure{position:relative;border-radius:14px;overflow:hidden;border:3px solid #fff;background:#000}
+.tiles figure{position:relative;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
 .tiles img{width:100%;aspect-ratio:356/632;object-fit:cover}
-.tiles figcaption{position:absolute;inset-inline:5px;bottom:6px;background:var(--or);border-radius:9px;padding:2px;text-align:center;font:800 14px var(--h);direction:ltr}
+.tiles figcaption{position:absolute;inset-inline:0;bottom:0;padding:22px 6px 8px;text-align:center;font:800 15px var(--h);direction:ltr;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.85))}
+/* plans */
 .plans{display:grid;gap:14px}
-.plan{background:#fff;border:2px solid var(--line);border-radius:22px;padding:22px}
-.plan.pro{border-color:var(--or)}
+.plan{background:var(--surf);border:1px solid var(--line);border-radius:var(--r);padding:24px}
+.plan.pro{border:1.5px solid var(--ink)}
 .plan .top2{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .price{font:800 34px var(--h);white-space:nowrap}
-.price small{font:700 15px var(--b);color:var(--mute)}
-.plan ul{list-style:none;margin-block:12px 18px;display:grid;gap:6px}
-.plan li{position:relative;padding-inline-start:18px;font-size:16px}
-.plan li:before{content:"";position:absolute;inset-inline-start:0;top:.72em;width:8px;height:8px;border-radius:50%;background:var(--or)}
-.plan.free li:before{background:#bbb3a6}
-details{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:8px}
-summary{cursor:pointer;list-style:none;padding:14px 18px;font:700 17px var(--b);display:flex;justify-content:space-between;gap:12px;align-items:center}
+.price small{font:500 14px var(--b);color:var(--mute)}
+.plan ul{list-style:none;margin-block:14px 20px;display:grid;gap:7px}
+.plan li{position:relative;padding-inline-start:18px;font-size:15.5px}
+.plan li:before{content:"";position:absolute;inset-inline-start:0;top:.78em;width:8px;height:1.5px;background:var(--acc)}
+.plan.free li:before{background:var(--mute)}
+/* faq */
+details{border-bottom:1px solid var(--line)}
+details:first-of-type{border-top:1px solid var(--line)}
+summary{cursor:pointer;list-style:none;padding:16px 2px;font:600 16.5px var(--b);display:flex;justify-content:space-between;gap:12px;align-items:center}
 summary::-webkit-details-marker{display:none}
-summary:after{content:"+";font:800 22px var(--h);color:var(--or);flex:none}
-details[open] summary:after{content:"−"}
-details .a{padding:0 18px 16px;color:#3a3732;font-size:16px}
+summary:after{content:"";flex:none;width:10px;height:10px;border-inline-start:1.5px solid var(--mute);border-bottom:1.5px solid var(--mute);transform:rotate(-45deg);transition:transform .2s}
+details[open] summary:after{transform:rotate(135deg)}
+details .a{padding:0 2px 18px;color:var(--mute);font-size:15.5px}
+details .a b{color:var(--ink)}
 details .a ol,details .a ul{padding-inline-start:20px;display:grid;gap:6px}
-.guide{border-color:var(--or)}
-.guide summary{font-size:18px}
+.guide summary{font-weight:700}
+.guide summary span{color:var(--acc)}
 .final{text-align:center}
 .final .btn{margin-inline:auto}
-footer{padding:26px 0 10px;text-align:center;font-size:13px;color:var(--mute)}
+footer{padding:28px 0 12px;text-align:center;font-size:12.5px;color:var(--mute);border-top:1px solid var(--line)}
 .sticky{position:fixed;inset-inline:0;bottom:0;z-index:9;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line);display:none}
 .sticky.on{display:block}
 .sticky .btn{max-width:none}
 @media (min-width:860px){
   body{padding-bottom:0}.sticky,.sticky.on{display:none}
-  .hero .w{grid-template-columns:1.2fr .8fr;align-items:center}
-  .steps{grid-template-columns:repeat(4,1fr)}.step{flex-direction:column;align-items:flex-start}
+  section{padding-block:88px}
+  .hero{padding-block:70px 90px}
+  .hero .w{grid-template-columns:1.25fr .75fr;align-items:center}
+  .steps{grid-template-columns:repeat(4,1fr);border-top:0}.step{grid-template-columns:1fr;border-bottom:0;border-top:1px solid var(--line);padding-inline-end:20px}
   .plans{grid-template-columns:1fr 1fr}
-  .cols{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:start}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center}
 }
 </style>
+<script>(function(){var v=new URLSearchParams(location.search).get('v');if(/^[abc]$/.test(v||''))document.documentElement.setAttribute('data-v',v)})();</script>
 <script>
 !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
 fbq('init','1093807586621158');fbq('track','PageView');
@@ -96,12 +119,12 @@ fbq('init','1093807586621158');fbq('track','PageView');
 </head>
 <body>
 
-<div class="w top"><img src="/lp/hero.webp" alt="" width="34" height="34">Media hub saver</div>
+<header><div class="w"><span class="wm"><i></i>Media hub</span><a class="hlink go" href="https://t.me/BMEDIAHUB_BOT">افتح البوت</a></div></header>
 
 <section class="hero"><div class="w">
   <div>
     <p class="eye" id="hEye">بوت على تيليجرام لأصحاب الصفحات الدينية</p>
-    <h1 id="hTitle">ريلز قرآن جاهزة لصفحتك <span class="acc">بضغطة زرار</span></h1>
+    <h1 id="hTitle">ريلز قرآن جاهزة لصفحتك <span class="acc deco">بضغطة زرار</span></h1>
     <p class="sub" id="hLead">تكتب اسم السورة، تختار القارئ والخلفية، والريل يوصلك جاهز تنشره. من غير مونتاج ولا خبرة.</p>
     <a class="btn go" href="https://t.me/BMEDIAHUB_BOT"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M21.9 4.6 18.8 19c-.2 1-.8 1.3-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.3-4.7 8.6-7.8c.4-.3-.1-.5-.6-.2L6.9 13 2.3 11.6c-1-.3-1-1 .2-1.5l18-6.9c.8-.3 1.6.2 1.4 1.4z"/></svg>جرّب ببلاش دلوقتي</a>
     <p class="small">ريل مجاني كل يوم · من غير تسجيل ولا كارت</p>
@@ -114,18 +137,18 @@ fbq('init','1093807586621158');fbq('track','PageView');
   <div class="phone" style="background-image:url(/lp/demo_kaaba_photos.webp)"><video id="hv" data-src="/lp/demo_kaaba_photos.mp4" muted loop playsinline preload="none" width="432" height="768" aria-label="ريل طالع من البوت"></video></div>
 </div></section>
 
-<section style="padding-top:8px"><div class="w">
+<section data-sec="how"><div class="w">
   <h2>بيشتغل إزاي؟</h2>
   <div class="steps">
-    <div class="step"><i>1</i><div><h3>افتح البوت</h3><p>من الزرار، على تيليجرام</p></div></div>
-    <div class="step"><i>2</i><div><h3>اكتب السورة</h3><p>مثلًا «الرحمن» أو «البقرة 255»</p></div></div>
-    <div class="step"><i>3</i><div><h3>اختار القارئ والخلفية</h3><p>10 قرّاء · الكعبة، مساجد، طبيعة</p></div></div>
-    <div class="step"><i>4</i><div><h3>انشر</h3><p>الآيات مكتوبة ومتزامنة مع التلاوة</p></div></div>
+    <div class="step"><i>01</i><div><h3>افتح البوت</h3><p>من الزرار، على تيليجرام</p></div></div>
+    <div class="step"><i>02</i><div><h3>اكتب السورة</h3><p>مثلًا «الرحمن» أو «البقرة 255»</p></div></div>
+    <div class="step"><i>03</i><div><h3>اختار القارئ والخلفية</h3><p>10 قرّاء · الكعبة، مساجد، طبيعة</p></div></div>
+    <div class="step"><i>04</i><div><h3>انشر</h3><p>الآيات مكتوبة ومتزامنة مع التلاوة</p></div></div>
   </div>
-  <div class="gets"><span>جودة 1080</span><span>طولي وعرضي</span><span>سطر أو سطرين</span><span>ريل من صوتك أو صورك</span><span>3 أو 5 ريلز بضغطة</span><span>تحميل من تيك توك ويوتيوب وإنستجرام وفيسبوك</span></div>
+  <p class="gets"><b>وكمان:</b> جودة 1080 · طولي وعرضي · الآيات سطر أو سطرين · ريل من صوتك أو صورك · 3 أو 5 ريلز بضغطة · تحميل فيديوهات من تيك توك ويوتيوب وإنستجرام وفيسبوك.</p>
 </div></section>
 
-<section class="dark"><div class="w cols">
+<section class="dark" data-sec="proof"><div class="w cols">
   <div>
     <p class="eye">نتايج حقيقية</p>
     <h2>صفحة عمرها 3 أيام… كل ريلزها من البوت</h2>
@@ -139,7 +162,7 @@ fbq('init','1093807586621158');fbq('track','PageView');
   </div>
 </div></section>
 
-<section id="price"><div class="w">
+<section id="price" data-sec="price"><div class="w">
   <h2>ابدأ ببلاش… واشترك لما تحتاج أكتر</h2>
   <div class="plans">
     <div class="plan pro">
@@ -167,9 +190,9 @@ fbq('init','1093807586621158');fbq('track','PageView');
   </div>
 </div></section>
 
-<section style="padding-top:0"><div class="w" style="max-width:760px">
+<section data-sec="faq"><div class="w" style="max-width:760px">
   <h2>هدايا وأسئلة</h2>
-  <details class="guide"><summary>دليل مجاني: إزاي تكبّر صفحتك الدينية</summary><div class="a"><ol>
+  <details class="guide"><summary><span>هدية ·</span> دليل مجاني: إزاي تكبّر صفحتك الدينية</summary><div class="a"><ol>
     <li><b>اسم وصورة واضحين</b> وبنفس ألوان ريلزك، عشان الناس تعرف صفحتك من أول نظرة.</li>
     <li><b>انشر 2 لـ 3 ريلز يوميًا</b> في أول شهر. الانتظام أهم من أي حاجة.</li>
     <li><b>آيات بتلمس الناس:</b> الرحمة والصبر والرزق والدعاء بتتشيّر أكتر. الريل من 30 لـ 60 ثانية بيتشاف للآخر.</li>
@@ -178,7 +201,7 @@ fbq('init','1093807586621158');fbq('track','PageView');
     <li><b>انشر نفس الريل</b> على فيسبوك وإنستجرام وتيك توك ويوتيوب شورتس.</li>
     <li><b>متشتريش متابعين.</b> الوهمي بيوقّع وصول صفحتك.</li>
   </ol></div></details>
-  <details class="guide"><summary>إزاي الصفحة تبقى مصدر دخل بعد ما تكبر</summary><div class="a"><ul>
+  <details class="guide"><summary><span>هدية ·</span> إزاي الصفحة تبقى مصدر دخل بعد ما تكبر</summary><div class="a"><ul>
     <li><b>بوستات وشير مدفوع:</b> صفحات ومشاريع بتدفع عشان تنشرلها عندك، والسعر بيزيد مع حجم جمهورك.</li>
     <li><b>أدوات الربح من فيسبوك:</b> لما الصفحة توصل لشروطهم تقدر تقدّم على أرباح المحتوى والنجوم (الموافقة في إيد فيسبوك).</li>
     <li><b>التسويق بالعمولة:</b> رشّح منتجات تناسب جمهورك (مصاحف، سجاجيد، كتب) وخد نسبة.</li>
@@ -197,7 +220,7 @@ fbq('init','1093807586621158');fbq('track','PageView');
   <details><summary>عندي مشكلة أكلّم مين؟</summary><div class="a">ابعت رسالة لصفحة Digital Jolt على فيسبوك ومعاك سكرين، ونرد عليك.</div></details>
 </div></section>
 
-<section class="final" style="padding-top:10px"><div class="w">
+<section class="final" data-sec="final"><div class="w">
   <h2>أول ريل ليك ببلاش… في دقيقة</h2>
   <a class="btn go" href="https://t.me/BMEDIAHUB_BOT">جرّب ببلاش على تيليجرام</a>
 </div></section>
@@ -210,10 +233,10 @@ fbq('init','1093807586621158');fbq('track','PageView');
   var q=new URLSearchParams(location.search);
   var src=(q.get("src")||q.get("utm_content")||q.get("utm_campaign")||"lp").toLowerCase().replace(/[^a-z0-9_]/g,"").slice(0,32)||"lp";
   var H={
-    new1:["لو عايز تبدأ صفحة دينية","ابدأ صفحة قرآن <span class=\"acc\">وكبّرها بسهولة</span>","البوت بيعملك ريل قرآن جاهز في دقيقة: الآيات مكتوبة ومتزامنة مع صوت القارئ على خلفية حلوة. إنت بس انشر."],
-    time:["لأصحاب الصفحات الدينية","صفحة قرآن كبيرة <span class=\"acc\">من غير ما تضيّع وقتك</span>","إنت بس اعمل الصفحة، وبكام ضغطة البوت يطلعلك ريل جاهز تنشره."],
-    pro:["لصناع المحتوى الديني","ريل قرآن 1080 <span class=\"acc\">في دقيقة</span>","اللي بياخد منك ساعة مونتاج، البوت بيعمله في دقيقة: تلاوة، آيات متزامنة، خلفية، وجودة 1080."],
-    all:["بوت واحد على تيليجرام","حمّل فيديوهات <span class=\"acc\">واعمل ريلز قرآن</span> ببلاش","ابعت لينك من تيك توك أو يوتيوب أو إنستجرام والفيديو يوصلك، واكتب اسم سورة والريل يطلع جاهز."]
+    new1:["لو عايز تبدأ صفحة دينية","ابدأ صفحة قرآن <span class=\"acc deco\">وكبّرها بسهولة</span>","البوت بيعملك ريل قرآن جاهز في دقيقة: الآيات مكتوبة ومتزامنة مع صوت القارئ على خلفية حلوة. إنت بس انشر."],
+    time:["لأصحاب الصفحات الدينية","صفحة قرآن كبيرة <span class=\"acc deco\">من غير ما تضيّع وقتك</span>","إنت بس اعمل الصفحة، وبكام ضغطة البوت يطلعلك ريل جاهز تنشره."],
+    pro:["لصناع المحتوى الديني","ريل قرآن 1080 <span class=\"acc deco\">في دقيقة</span>","اللي بياخد منك ساعة مونتاج، البوت بيعمله في دقيقة: تلاوة، آيات متزامنة، خلفية، وجودة 1080."],
+    all:["بوت واحد على تيليجرام","حمّل فيديوهات <span class=\"acc deco\">واعمل ريلز قرآن</span> ببلاش","ابعت لينك من تيك توك أو يوتيوب أو إنستجرام والفيديو يوصلك، واكتب اسم سورة والريل يطلع جاهز."]
   };
   var k=/^fb_new2/.test(src)?"time":/^fb_new/.test(src)?"new1":/^fb_pro/.test(src)?"pro":/^fb_all/.test(src)?"all":null;
   if(k){document.getElementById("hEye").textContent=H[k][0];document.getElementById("hTitle").innerHTML=H[k][1];document.getElementById("hLead").textContent=H[k][2]}
@@ -240,6 +263,16 @@ fbq('init','1093807586621158');fbq('track','PageView');
     });
   });
 
+  // first-party analytics: each event once per page view, sent in small batches
+  var Q=[],sent={};
+  function ev(e){if(sent[e])return;sent[e]=1;Q.push(e)}
+  function flush(){if(!Q.length)return;var b=JSON.stringify({src:src,e:Q.splice(0)});try{if(!(navigator.sendBeacon&&navigator.sendBeacon("/api/lp/ev",new Blob([b],{type:"application/json"}))))fetch("/api/lp/ev",{method:"POST",headers:{"content-type":"application/json"},body:b,keepalive:true})}catch(x){}}
+  ev("view");setTimeout(flush,1200);setInterval(flush,4000);
+  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")flush()});
+  var shown=0,last=Date.now();setInterval(function(){if(document.visibilityState==="visible")shown+=Date.now()-last;last=Date.now();[5,15,30,60].forEach(function(t){if(shown>=t*1000)ev("t"+t)})},1000);
+  document.querySelectorAll("[data-sec]").forEach(function(el){if(!("IntersectionObserver" in window))return;var o=new IntersectionObserver(function(es){if(es[0].isIntersecting){ev("sec:"+el.dataset.sec);o.disconnect()}},{threshold:.35});o.observe(el)});
+  document.querySelectorAll("details").forEach(function(d){d.addEventListener("toggle",function(){if(d.open)ev(d.classList.contains("guide")?"faq":"faq")})});
+  document.querySelectorAll("a.go").forEach(function(el){el.addEventListener("click",function(){ev(el.dataset.sub?"click_pro":"click");flush()})});
   var hv=document.getElementById("hv");
   window.addEventListener("load",function(){setTimeout(function(){hv.src=hv.dataset.src;var p=hv.play();if(p&&p.catch)p.catch(function(){})},400)});
   var st=document.getElementById("sticky"),cta=document.querySelector(".hero .btn");

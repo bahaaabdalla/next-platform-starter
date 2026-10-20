@@ -1,5 +1,6 @@
 // Web admin panel: /panel (single page) + /api/panel/* (JSON). Access is a signed link the bot sends to an admin (/web);
 // /web off rotates the signing version so every old link stops working.
+import {lpStats} from "./lpa.js";
 import crypto from "node:crypto";
 import {pipe,cmd,obj} from "./redis.js";
 import {tg,send,sleep} from "./tg.js";
@@ -138,6 +139,7 @@ export async function panelRoute(req,res,p){
     case "users":data=(await allUsers()).sort((x,y)=>y.reg-x.reg);break;
     case "user":data=await userAction(b,admin);break;
     case "sources":data=await sources();break;
+    case "lpstats":data=await lpStats(b.days);break;
     case "settings":data=b.set?await setSettings(b.set):{cfg:await getCfg()};break;
     case "health":data=await health();break;
     case "broadcast":data=await broadcast(b);break;
