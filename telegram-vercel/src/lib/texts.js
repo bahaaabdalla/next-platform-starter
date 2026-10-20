@@ -8,9 +8,10 @@ export const LONG=`🎬 حمّل من YouTube وTikTok وInstagram وFacebook (�
 🚫 ممنوع استخدامه في أي محتوى لا يرضي الله (زي الأغاني).`;
 export const ONBOARD_HEAD=`🎬 أهلاً بيك في Media hub saver!
 حمّل فيديوهات وصور من YouTube وTikTok وInstagram وFacebook مجانًا.
-🎁 هدية البداية: 5 تحميلات، وبعدها 2 تحميل يوميًا.
 
 `;
+// Onboarding header with the live numbers, and the paid plan up front (not only when a paid button is tapped).
+export const onboardHead=c=>"🎬 أهلاً بيك في Media hub saver!\n\n🆓 مجانًا: تحميل فيديوهات وصور من YouTube وTikTok وInstagram وFacebook ("+c.welcome+" تحميلات هدية، وبعدها "+c.daily+" يوميًا)، و"+(c.fDaily===1?"ريل قرآن":c.fDaily+" ريلز قرآن")+" يوميًا.\n💎 الباقة المميزة ("+c.price+" جنيه/شهر): "+c.pDaily+" ريلز قرآن يوميًا بجودة 1080 ومن غير علامة مائية"+(c.packOn?"، وزرار «⚡ ريلز جاهزة» يعملك "+(c.packMax>=5?"3 أو 5":"3")+" ريلز بضغطة":"")+". المشتركين مش محتاجين يشتركوا في القناة.\n\n";
 export const TERMS=`⚖️ شروط الاستخدام وإخلاء المسؤولية
 
 • البوت أداة مساعدة لتحميل المحتوى العام فقط ومخصص للاستخدام الشخصي.

@@ -5,7 +5,7 @@ import {send,tg} from "./tg.js";
 import {cmd,pipe,obj} from "./redis.js";
 import {P,ADMINS,PLANS,getCfg,mins} from "./quota.js";
 
-const TTL=1800,DAYS=30;
+const TTL=900,DAYS=30;
 const k=u=>P+"pay:"+u;
 const day=t=>new Date(Number(t)).toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
 const esc=s=>String(s||"").replace(/[<>&]/g,"");
@@ -20,7 +20,7 @@ export async function payStart(id,user){
   await cmd("SET",k(user),JSON.stringify({step:"phone"}),"EX",String(TTL));
   return send(id,"💎 الاشتراك في الباقة المميزة — "+price+" جنيه / 30 يوم\n\n"+
     "1️⃣ حوّل "+price+" جنيه على:\n"+(num?"📱 فودافون كاش: "+num+"\n":"")+(insta?"🏦 InstaPay: "+insta+"\n":"")+
-    "\n2️⃣ ابعتلي هنا رقم الموبايل اللي حوّلت منه.\n3️⃣ وبعده صورة (سكرين) التحويل.\n\nوهيتفعل اشتراكك أول ما يتراجع (عادة خلال ساعات). /cancel للإلغاء.",
+    "\n2️⃣ ابعتلي هنا رقم الموبايل اللي حوّلت منه.\n3️⃣ وبعده صورة (سكرين) التحويل.\n\nوهيتفعل اشتراكك أول ما يتراجع (عادة خلال ساعات).\nبالاشتراك إنت موافق على شروط الاستخدام /terms",
     {inline_keyboard:[[{text:"✖️ إلغاء",callback_data:"pay:x"}]]});
 }
 
@@ -29,15 +29,20 @@ export async function payMessage(m,id,user,body){
   const raw=await cmd("GET",k(user));if(!raw)return false;
   const st=JSON.parse(raw);
   if(body==="/cancel"){await cmd("DEL",k(user));await send(id,"تم إلغاء طلب الاشتراك.");return true}
+  const cancelKb={inline_keyboard:[[{text:"✖️ إلغاء الاشتراك",callback_data:"pay:x"}]]};
+  // a user who changed their mind must never get stuck: the second unrelated message cancels the request
+  // and is handled normally (a link, a surah name, ...)
+  const strike=async()=>{if((st.miss||0)>=1){await cmd("DEL",k(user));await send(id,"تم إلغاء طلب الاشتراك. تقدر ترجعله في أي وقت من /subscribe");return false}
+    st.miss=(st.miss||0)+1;await cmd("SET",k(user),JSON.stringify(st),"EX",String(TTL));return true};
   if(st.step==="phone"){
     const ph=body.replace(/[\s-]/g,"").replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/^\+?20/,"0");
-    if(!/^01[0125]\d{8}$/.test(ph)){await send(id,"⚠️ ابعت رقم موبايل مصري صحيح (11 رقم يبدأ بـ 01) — الرقم اللي حوّلت منه.");return true}
+    if(!/^01[0125]\d{8}$/.test(ph)){if(!(await strike()))return false;await send(id,"⚠️ ابعت رقم الموبايل اللي حوّلت منه (11 رقم يبدأ بـ 01).\nمش عايز تشترك دلوقتي؟ دوس إلغاء.",cancelKb);return true}
     await cmd("SET",k(user),JSON.stringify({step:"shot",phone:ph}),"EX",String(TTL));
-    await send(id,"✅ تمام. ابعت دلوقتي صورة سكرين التحويل.");return true;
+    await send(id,"✅ تمام. ابعت دلوقتي صورة سكرين التحويل.",cancelKb);return true;
   }
   if(st.step==="shot"){
     const photo=m.photo?.length?m.photo[m.photo.length-1].file_id:(m.document&&/^image\//.test(m.document.mime_type||"")?m.document.file_id:"");
-    if(!photo){await send(id,"📸 محتاج صورة سكرين التحويل (صورة مش نص).");return true}
+    if(!photo){if(!(await strike()))return false;await send(id,"📸 محتاج صورة سكرين التحويل (صورة مش نص).\nمش عايز تكمل؟ دوس إلغاء.",cancelKb);return true}
     const rid=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
     const who=[m.from?.first_name,m.from?.last_name].filter(Boolean).join(" ");
     await pipe([["HSET",P+"payreq:"+rid,"user",String(user),"phone",st.phone,"photo",photo,"name",who,"uname",m.from?.username||"","ts",String(Date.now()),"status","pending"],
@@ -106,3 +111,6 @@ export async function payStatsText(){
     "\nمقبول: "+(s.approved||0)+" · مرفوض: "+(s.rejected||0)+" · مستني مراجعة (آخر 50): "+pend+(rows.length?"\n\n"+rows.join("\n"):"")+
     "\n\nالأوامر: /paynum 01xxxxxxxxx · /payinsta اسم@instapay · /price 50";
 }
+
+// Any other button or command abandons a half-filled subscription request.
+export async function payAbandon(user){try{await cmd("DEL",k(user))}catch{}}

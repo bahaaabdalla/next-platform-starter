@@ -4,14 +4,14 @@ import {P,isAdmin,ADMINS,getCfg,account,load,describe,acceptTerms,member,chanLin
 import {planLine} from "../lib/admin.js";
 import {initReel,reelStart,reelCallback,reelMessage,isReelCallback,contactLine} from "../lib/reel.js";
 import {adminCommand,adminCallback} from "../lib/admin.js";
-import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT} from "../lib/texts.js";
-import {payStart,payMessage,payDecision} from "../lib/pay.js";
+import {TERMS,HOWTO,ONBOARD_HEAD,PLANS_TEXT,onboardHead} from "../lib/texts.js";
+import {payStart,payMessage,payDecision,payAbandon} from "../lib/pay.js";
 import {panelRoute} from "../lib/web.js";
 
 const SECRET=process.env.TG_WEBHOOK_SECRET,WORKER=process.env.MEDIA_WORKER_URL,WKEY=process.env.MEDIA_WORKER_SECRET;
 const ALLOWED=(process.env.ALLOWED_USER_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);const allowed=id=>!ALLOWED.length||ALLOWED.includes(String(id));
 const WH=process.env.TG_PUBLIC_WEBHOOK_URL||"https://bmediahub-telegram.vercel.app/api/webhook";
-const menu={inline_keyboard:[[{text:"🎬 صانع الريلز",callback_data:"reel:new"}],[{text:"📥 فيديو",callback_data:"tool:video"},{text:"🎵 صوت MP3",callback_data:"tool:audio"}],[{text:"🖼 الغلاف",callback_data:"tool:cover"},{text:"📦 ضغط",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 صور",callback_data:"tool:photos"},{text:"📝 الوصف",callback_data:"tool:caption"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ الحالة",callback_data:"tool:status"}]]};
+const menu={inline_keyboard:[[{text:"🎬 صانع الريلز",callback_data:"reel:new"},{text:"💎 الباقة المميزة",callback_data:"plans"}],[{text:"📥 فيديو",callback_data:"tool:video"},{text:"🎵 صوت MP3",callback_data:"tool:audio"}],[{text:"🖼 الغلاف",callback_data:"tool:cover"},{text:"📦 ضغط",callback_data:"tool:compress"}],[{text:"🎞 GIF",callback_data:"tool:gif"},{text:"🔁 WebM",callback_data:"tool:webm"}],[{text:"🖼 صور",callback_data:"tool:photos"},{text:"📝 الوصف",callback_data:"tool:caption"}],[{text:"⚡ تنشيط",callback_data:"tool:wake"},{text:"ℹ️ الحالة",callback_data:"tool:status"}]]};
 const TOOL_AR={video:"📥 تحميل فيديو",audio:"🎵 تحويل لصوت MP3",cover:"🖼 غلاف الفيديو",compress:"📦 ضغط الفيديو",gif:"🎞 تحويل GIF",webm:"🔁 تحويل WebM"};
 const MODES=["chat","link","cover","audio","gif","compress","webm","photos","photo","caption"],FREE_MODES=["cover","caption"];
 function ret(res,x,s=200){res.writeHead(s,{"content-type":"application/json;charset=utf-8","cache-control":"no-store"});return res.end(JSON.stringify(x))}
@@ -36,18 +36,22 @@ function onboard(c,needTerms){
   const rows=[];if(c.main)rows.push([{text:"📣 اشترك في القناة",url:chanLink(c.main)}]);
   rows.push([{text:needTerms?(c.main?"✅ اشتركت وأوافق على الشروط":"✅ أوافق على الشروط"):"✅ اشتركت، تحقق",callback_data:"go"}]);
   const text=needTerms
-    ?ONBOARD_HEAD+TERMS+(c.main?"\n\n👇 خطوتين بس: اشترك في "+c.main+"، وبعدها دوس «اشتركت وأوافق على الشروط».":"")
+    ?onboardHead(c)+TERMS+(c.main?"\n\n👇 خطوتين بس: اشترك في "+c.main+"، وبعدها دوس «اشتركت وأوافق على الشروط».":"")
     :"📣 عشان تكمل لازم تشترك في قناتنا:\n"+c.main+"\nوبعدها دوس «اشتركت، تحقق».";
   return {text,kb:{inline_keyboard:rows}};
 }
-async function gate(user,{credit=false,pending=null}={}){
+const paidUser=a=>["pro","50","100"].includes(String(a.user.plan||""))&&Number(a.user.pexp)>Date.now();
+async function gate(user,{credit=false,pending=null,chan=true,from=null}={}){
   if(!redisOn()||isAdmin(user))return null;
   try{
     const {c,a}=await load(user);
     if(a.banned)return {text:"⛔ تم إيقاف حسابك من استخدام البوت."};
     if(c.maint)return {text:"🛠 البوت في صيانة دلوقتي. جرّب بعد شوية."};
-    if(!a.terms){await remember(user,pending);return onboard(c,true)}
-    if(c.main&&(await member(c.main,user))===false){await remember(user,pending);return onboard(c,false)}
+    if(!a.terms){
+      if(!chan){await acceptTerms(user,from,c);return null}   // going straight to pay: registering = accepting the terms (stated in the pay message)
+      await remember(user,pending);return onboard(c,true)}
+    // the mandatory channel is for free users only: subscribers (and anyone on the way to paying) skip it
+    if(chan&&c.main&&!paidUser(a)&&(await member(c.main,user))===false){await remember(user,pending);return onboard(c,false)}
     if(credit&&!a.unlimited&&a.remaining<=0)return await exhausted(user,c,a,pending);
     return null;
   }catch(e){console.error("gate",e.message);return null}   // fail-open: never lock users out because Redis is down
@@ -66,7 +70,7 @@ async function resume(id,user){
   if(!redisOn())return;
   try{const url=await cmd("GETDEL",P+"pend:"+user);if(url)await proceed(id,user,url,null)}catch(e){console.error("resume",e.message)}
 }
-const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me";
+const welcome=(c)=>"🎉 أهلاً بيك في Media hub saver!\n🎁 معاك "+c.welcome+" تحميلات هدية للبداية، وبعدها "+c.daily+" تحميل يوميًا.\n\nابعت رابط فيديو أو صور عام من YouTube أو TikTok أو Instagram أو Facebook.\n\n💎 الباقة المميزة ("+c.price+" جنيه/شهر): "+c.pDaily+" ريلز قرآن يوميًا بجودة 1080 من غير علامة مائية"+(c.packOn?" + ريلز جاهزة للنشر بضغطة":"")+". تفاصيلها من زرار «💎 الباقة المميزة» تحت.\n\nلشرح النظام اضغط /help\nلمعرفة رصيدك اضغط /me";
 
 initReel({gate,deny,wake,wk,getPlatform,hasWorker:()=>!!(WORKER&&WKEY)});
 
@@ -77,14 +81,15 @@ async function message(m,u){
   if(body.startsWith("/id"))return send(id,"🆔 رقم حسابك: "+user);
   if(redisOn()&&isAdmin(user)&&body.startsWith("/")){try{if(await adminCommand(body,id))return}catch(e){console.error("admin",e.message);return send(id,"⚠️ خطأ في تنفيذ الأمر: "+e.message.slice(0,120))}}
   if(redisOn()&&(!body.startsWith("/")||body==="/cancel")){try{if(await payMessage(m,id,user,body))return}catch(e){console.error("pay msg",e.message)}}
+  else if(redisOn()&&body.startsWith("/")&&!body.startsWith("/subscribe"))await payAbandon(user);
   // reel studio first: it consumes photos/voice/audio/links/script while a reel is being built (and admin library uploads)
   if(redisOn()&&!body.startsWith("/")){try{if(await reelMessage(m,id,user,body))return}catch(e){console.error("reel msg",e.message)}}
   if(body.startsWith("/start")){
     // deep links for ads: t.me/BMEDIAHUB_BOT?start=<source>  (…_sub opens the subscription, …_reel opens the reel maker)
     const src=(body.split(/\s+/)[1]||"").toLowerCase();
     if(redisOn()&&/^[a-z0-9_]{1,32}$/.test(src)){const base=src.replace(/(^|_)(sub|reel)$/,"")||src;try{await pipe([["HINCRBY",P+"src",base,"1"],["HSETNX",P+"u:"+user,"src",base]])}catch(e){console.error("src",e.message)}}
+    if(redisOn()&&/(^|_)sub$/.test(src)){const g=await gate(user,{chan:false,from:m.from});if(g)return deny(id,g);return payStart(id,user)}
     if(redisOn()&&!isAdmin(user)){const g=await gate(user);if(g)return deny(id,g)}
-    if(redisOn()&&/(^|_)sub$/.test(src))return payStart(id,user);
     if(redisOn()&&/(^|_)reel$/.test(src))return reelStart(id,user);
     return send(id,redisOn()?welcome(await getCfg()):"🎬 أهلاً بيك!\nابعت رابط فيديو عام.",menu);
   }
@@ -92,7 +97,7 @@ async function message(m,u){
   if(body.startsWith("/reel")){if(!redisOn())return send(id,"⚠️ صانع الريلز مش متاح دلوقتي.");return reelStart(id,user)}
   if(body.startsWith("/plans")||body.startsWith("/subscribe")){
     if(!redisOn())return send(id,PLANS_TEXT);
-    if(body.startsWith("/subscribe")){const g=await gate(user);if(g)return deny(id,g);return payStart(id,user)}
+    if(body.startsWith("/subscribe")){const g=await gate(user,{chan:false,from:m.from});if(g)return deny(id,g);return payStart(id,user)}
     const c=await getCfg();return send(id,plansText(c)+(c.paynum||c.payinsta?"":await contactLine()),c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}]]}:undefined);
   }
   if(body.startsWith("/me")){
@@ -124,8 +129,10 @@ async function callback(q){
 }
 async function callbackWork(q,d,ack){
   const id=q.message?.chat?.id,user=q.from?.id;if(!id||!user)return;if(!allowed(user))return;
+  if(redisOn()&&!d.startsWith("pay:")&&!d.startsWith("pr:"))await payAbandon(user);
   if(d.startsWith("adm:")){if(isAdmin(user)&&redisOn())return adminCallback(d,id);return}
-  if(d==="pay:start"){if(!redisOn())return;const g=await gate(user);if(g)return deny(id,g);return payStart(id,user)}
+  if(d==="pay:start"){if(!redisOn())return;const g=await gate(user,{chan:false,from:q.from});if(g)return deny(id,g);return payStart(id,user)}
+  if(d==="plans"){if(!redisOn())return send(id,PLANS_TEXT);const c=await getCfg();return send(id,plansText(c)+(c.paynum||c.payinsta?"":await contactLine()),c.paynum||c.payinsta?{inline_keyboard:[[{text:"💳 اشترك الآن",callback_data:"pay:start"}]]}:undefined)}
   if(d==="pay:x"){if(redisOn())await cmd("DEL",P+"pay:"+user);return send(id,"تم إلغاء طلب الاشتراك.")}
   if(d.startsWith("pr:")){if(!isAdmin(user)||!redisOn())return;const t=await payDecision(q,d,user);return ack(t,true)}
   if(isReelCallback(d)){if(!redisOn())return;return reelCallback(q,d,id,user)}
@@ -135,7 +142,7 @@ async function callbackWork(q,d,ack){
     if((await cmd("SET",P+"lock:go:"+user,"1","NX","EX","8"))!=="OK")return;
     const {c,a}=await load(user);
     if(a.banned)return ack("⛔ تم إيقاف حسابك.",true);
-    const mem=c.main&&!isAdmin(user)?await member(c.main,user):true;
+    const mem=c.main&&!isAdmin(user)&&!paidUser(a)?await member(c.main,user):true;
     if(mem===false){await cmd("DEL",P+"lock:go:"+user);return ack("⚠️ لسه مش مشترك في القناة. اشترك الأول وبعدين دوس الزرار تاني.",true)}
     if(!a.terms)await acceptTerms(user,q.from,c);
     const text=a.terms?"✅ تم التحقق. ابعت الرابط وأنا أكمل.\n\n"+welcome(c):welcome(c);
