@@ -688,7 +688,7 @@ class ReelReq(BaseModel):
  chat_id:int;user_id:int;source:str='quran'
  surah:int=0;frm:int=0;to:int|None=None;reciter:str='';maxdur:float=30   # quran
  audio_file:str='';video_file:str='';url:str='';link_mode:str='audio';images:list[str]=[];script:str='';start:float=0;dur:float=30;move:bool=True   # media
- cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix';hd:bool=False;lines:int=0
+ cap:float=60;ar:str='9:16';vig:bool=True;wm:str='';logo:str='';bgs:list[str]=[];sig:str='';bgmode:str='every';bgsec:float=5;bgn:int=4;bgsrc:str='';theme:str='mix';hd:bool=False;lines:int=1;font:str='hafs';stroke:str='none';grade:bool=True;title:bool=False;tashkeel:str='full'
  items:list[dict]=[]   # ready-made pack: [{surah,frm,to,reciter,theme}]
 
 FID=re.compile(r'^[A-Za-z0-9_-]{10,200}$')
@@ -703,7 +703,10 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
  spec['bgs']=[x for x in spec['bgs'] if FID.match(x)][:8]
  if spec['bgsrc'] not in ('','stock','lib','img'):spec['bgsrc']=''
  if spec['theme'] not in stock.THEMES:spec['theme']='mix'
- spec['lines']=max(0,min(int(spec['lines']),3))
+ spec['lines']=1   # one line per screen, always
+ if spec['font'] not in reels.FONTS:spec['font']='hafs'
+ if spec['stroke'] not in ('none','light'):spec['stroke']='none'
+ if spec['tashkeel'] not in ('full','light','none'):spec['tashkeel']='full'
  if spec['logo'] and not FID.match(spec['logo']):spec['logo']=''
  if p.source=='quran':
   spec['maxdur']=max(5,min(float(spec['maxdur']),spec['cap']))

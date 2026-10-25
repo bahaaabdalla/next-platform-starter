@@ -5,13 +5,29 @@ Audio: one MP3 per ayah from everyayah.com, so every ayah's on-screen time equal
 Video: placeholder backgrounds (until the generated library exists) panning slowly, crossfades, optional vignette,
 centered verse pages, surah label and an optional watermark. Output H.264/AAC, 720p.
 """
-import os,json,math,random,shutil,subprocess,threading,time
+import os,re,json,math,random,shutil,subprocess,threading,time
 from pathlib import Path
 import httpx
 
 HERE=Path(__file__).resolve().parent
 DATA_FILE=HERE/'data'/'quran.json'
 FONT=os.getenv('QURAN_FONT',str(HERE/'fonts'/'AmiriQuran-Regular.ttf'))
+# verse fonts the user can pick; 'hafs' (King Fahd Uthmanic, the Mushaf look) is the default
+FONTS={'hafs':str(HERE/'fonts'/'UthmanicHafs.otf'),'bold':str(HERE/'fonts'/'ScheherazadeNew-Bold.ttf'),
+       'naskh':str(HERE/'fonts'/'NotoNaskhArabic-Regular.ttf'),'medium':str(HERE/'fonts'/'NotoNaskhArabic-SemiBold.ttf'),'classic':FONT}
+# diacritics: full (default) / light (no sukun, pause or small recitation marks) / none (letters only)
+_LIGHT=re.compile('[\u0652\u06e1\u06d6-\u06dc\u06df\u06e0\u06e2\u06e3\u06ea-\u06ed]')
+_NONE=re.compile('[\u064b-\u0652\u0670\u06d6-\u06dc\u06df-\u06ed\u08f0-\u08f2\u0640]')
+def diacritics(t,level):
+    if level=='light':return _LIGHT.sub('',t)
+    if level=='none':return ' '.join(_NONE.sub('',t.replace('\u0671','\u0627')).split())
+    return t
+
+def vfont(spec):return FONTS.get(str((spec or {}).get('font') or 'hafs'),FONTS['hafs'])
+def ayah_mark(num,fkey):
+    d=str(num).translate(AR_DIGITS)
+    return ' '+d if fkey in ('hafs',None,'') else ' \u06dd'+d   # Hafs draws the medallion from the digits alone
+
 UI_FONT=os.getenv('UI_FONT',str(HERE/'fonts'/'Amiri-Regular.ttf'))
 TITLE_FONT=str(HERE/'fonts'/'ArefRuqaa-Bold.ttf')            # surah name on top
 SIG_AR_FONT=str(HERE/'fonts'/'ArefRuqaa-Regular.ttf')        # page signature, Arabic
@@ -213,45 +229,63 @@ def wrap(draw,text,f,maxw):
  if line:lines.append(line)
  return lines
 
-def layout(W,H,lines=0):
- # Reels/Shorts safe zone: clear of the top bar, the bottom ~22% (account name + caption) and the right-side buttons.
- # Sizes are designed at 720p and scaled by k for 1080p. lines=1..3 = short pages (bigger text, one thought at a time).
+def layout(W,H,fpath=None):
+ # One line per screen, like the popular Quran reels: smaller text, centred a little above the middle,
+ # clear of the Reels/Shorts top bar, bottom caption area and right-side buttons. Designed at 720p, scaled by k.
  k=min(W,H)/720
- if W<H:L=dict(size=50,maxw=W-150*k,lh=100,maxlines=6,cy=int(H*0.45))
- else:L=dict(size=44,maxw=W-260*k,lh=86,maxlines=4,cy=int(H*0.47))
- if lines:L.update(maxlines=int(lines),size=L['size']*1.12,lh=L['lh']*1.12)
+ if W<H:L=dict(size=44,maxw=W-120*k,lh=100,cy=int(H*0.46))
+ else:L=dict(size=40,maxw=W-300*k,lh=86,cy=int(H*0.46))
+ if fpath and 'NotoNaskh' in fpath:L['size']*=0.9
  L['size']=int(L['size']*k);L['lh']=int(L['lh']*k);L['maxw']=int(L['maxw']);L['k']=k
  return L
 
-def ayah_pages(text,W,H,lines=0):
- """Split one ayah into screen pages (lists of lines)."""
+WAQF=re.compile(r'([\u06d6-\u06dc])\s+')
+def ayah_pages(text,W,H,fpath=None):
+ """Split one ayah into one-line screens: break at the waqf (pause) marks first, then by width; never leave
+ one or two words alone on a screen."""
  from PIL import Image,ImageDraw
- L=layout(W,H,lines);d=ImageDraw.Draw(Image.new('L',(8,8)));f=font(FONT,L['size'])
- out=wrap(d,text,f,L['maxw']);n=L['maxlines']
- pages=[out[i:i+n] for i in range(0,len(out),n)] or [[text]]
- if len(pages)>1 and len(pages[-1])==1 and len(pages[-1][0].split())<=2 and n>1:   # don't leave one or two words alone on a page
-  pages[-2]=pages[-2]+pages[-1];pages.pop()
- return pages
+ L=layout(W,H,fpath);d=ImageDraw.Draw(Image.new('L',(8,8)));f=font(fpath or FONT,L['size'])
+ parts=[p.strip() for p in WAQF.sub(r'\1\n',text).split('\n') if p.strip()]
+ tl=lambda t:d.textlength(t,font=f,direction='rtl',language='ar')
+ lines=[]
+ for p in parts:
+  n=max(1,math.ceil(tl(p)/L['maxw']))
+  if n==1:chunk=[p]
+  else:   # balanced: n lines of about equal width, so no screen is left with one or two words
+   target=tl(p)/n;chunk=[];cur=''
+   for w in p.split():
+    cand=(cur+' '+w).strip()
+    if cur and (tl(cand)>L['maxw'] or (tl(cand)>target*1.04 and len(chunk)<n-1)):chunk.append(cur);cur=w
+    else:cur=cand
+   if cur:chunk.append(cur)
+  for ln in chunk:
+   if lines and len(ln.split())<=2 and tl(lines[-1]+' '+ln)<=L['maxw']:lines[-1]+=' '+ln
+   else:lines.append(ln)
+ if len(lines)>1 and len(lines[-1].split())<=2 and tl(lines[-2]+' '+lines[-1])<=L['maxw']*1.08:
+  tail=lines.pop();lines[-1]+=' '+tail
+ return [[ln] for ln in lines] or [[text]]
 
 def plate_for(band):
  """Opacity of a soft dark panel behind the verse on bright footage (0 = none)."""
  b=float(band or 0);return 0.0 if b<150 else round(min(0.55,0.22+(b-150)/180),2)
 
-def text_png(lines,W,H,dest,lines_mode=0,plate=0.0):
+def text_png(lines,W,H,dest,fpath=None,stroke='none',plate=0.0):
+ """White verse, no outline by default: only a soft shadow (or a light outline when asked)."""
  from PIL import Image,ImageDraw,ImageFilter
- L=layout(W,H,lines_mode);k=L['k'];f=font(FONT,L['size']);SW=max(2,L['size']//17)
+ fpath=fpath or FONT;L=layout(W,H,fpath);k=L['k'];f=font(fpath,L['size'])
+ SW=max(1,round(L['size']/34)) if stroke=='light' else 0
  img=Image.new('RGBA',(W,H),(0,0,0,0));sh=Image.new('RGBA',(W,H),(0,0,0,0))
  top=L['cy']-len(lines)*L['lh']//2
  ds=ImageDraw.Draw(sh);dt=ImageDraw.Draw(img)
- if plate>0:   # bright background: a soft, rounded dark panel behind the lines keeps the verse readable without a black frame
-  wmax=max(dt.textlength(ln,font=f,direction='rtl',language='ar') for ln in lines);px,py=int(34*k),int(18*k)
-  ds.rounded_rectangle((int(W/2-wmax/2-px),top-py,int(W/2+wmax/2+px),top+len(lines)*L['lh']+py),radius=int(28*k),fill=(0,0,0,int(255*plate)))
+ if plate>0:   # very bright footage only: a soft dark panel keeps the verse readable
+  wmax=max(dt.textlength(ln,font=f,direction='rtl',language='ar') for ln in lines);px,py=int(34*k),int(16*k)
+  ds.rounded_rectangle((int(W/2-wmax/2-px),top-py,int(W/2+wmax/2+px),top+len(lines)*L['lh']+py),radius=int(26*k),fill=(0,0,0,int(255*plate)))
  for i,ln in enumerate(lines):
   y=top+i*L['lh']
-  # soft drop shadow + a dark outline so the verse stays readable on bright or busy footage
-  ds.text((W//2+int(2*k),y+int(4*k)),ln,font=f,fill=(0,0,0,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW+int(3*k),stroke_fill=(0,0,0,255))
-  dt.text((W//2,y),ln,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar',stroke_width=SW,stroke_fill=(0,0,0,235))
- sh=sh.filter(ImageFilter.GaussianBlur(7*k))
+  ds.text((W//2+int(1*k),y+int(2*k)),ln,font=f,fill=(0,0,0,170 if not SW else 200),anchor='mt',direction='rtl',language='ar',stroke_width=int(2*k),stroke_fill=(0,0,0,150))
+  kw=dict(stroke_width=SW,stroke_fill=(0,0,0,175)) if SW else {}
+  dt.text((W//2,y),ln,font=f,fill=(255,255,255,255),anchor='mt',direction='rtl',language='ar',**kw)
+ sh=sh.filter(ImageFilter.GaussianBlur(6*k))
  full=Image.alpha_composite(sh,img);box=full.getbbox() or (0,0,2,2)
  box=(max(0,box[0]-4)&~1,max(0,box[1]-4)&~1,min(W,box[2]+4),min(H,box[3]+4))
  full.crop(box).save(dest)
@@ -418,7 +452,9 @@ def dim_for(band):
  progressively more, so white text keeps contrast on bright footage."""
  return round(max(0.0,min(0.12,(float(band or 0)-110)/350)),3)
 
-def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0):
+# soft cinematic look: muted colours, lifted blacks, a cool grey-blue cast (the popular Quran-reel grade)
+GRADE="eq=contrast=0.90:saturation=0.70:brightness=-0.025,curves=all='0/0.05 0.5/0.47 1/0.93',colorbalance=rs=-0.03:bs=0.07:rm=-0.02:bm=0.04"
+def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0,grade=False):
  """Pass 2: text pages + chrome (label, watermark/logo, vignette) over the track, plus the audio."""
  args=list(FF)+['-i',str(track)]
  for (p,_,_),_,_ in pages:args+=['-i',str(p)]
@@ -426,6 +462,7 @@ def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0):
  if audio:args+=['-i',str(audio)]
  fl=[];cur='0:v'
  if dim>0:fl.append('[0:v]eq=brightness=%.3f:contrast=%.3f[dk]'%(-dim,1-dim*0.4));cur='dk'
+ if grade:fl.append('[%s]%s[gr]'%(cur,GRADE));cur='gr'
  for k,((p,px,py),t0,t1) in enumerate(pages):
   fl.append("[%s][%d:v]overlay=%d:%d:eof_action=repeat:enable='between(t,%.3f,%.3f)'[t%d]"%(cur,k+1,px,py,t0,t1,k));cur='t%d'%k
  ci=len(pages)+1
@@ -504,18 +541,21 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
   if on_stage:on_stage('render')
   audio,total_v,spans=recitation(ayat,work,hardcap)
  # verse pages timed to their recitation (each ayah's pages share its spoken time; the last one holds through the pause)
- pages=[];k=0
+ pages=[];k=0;fkey=str(spec.get('font') or 'hafs');fpath=vfont(spec);stroke=str(spec.get('stroke') or 'none')
  for num,t0,t1 in spans:
-  text=ayah_text(s,num).translate(TANWEEN)+' ﴿'+str(num).translate(AR_DIGITS)+'﴾'
-  lm=int(spec.get('lines') or 0);pg=ayah_pages(text,W,H,lm);weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
+  raw=ayah_text(s,num)
+  text=(raw if fkey=='hafs' else raw.translate(TANWEEN))+ayah_mark(num,fkey)   # Hafs reads the King Fahd encoding as is
+  tk=str(spec.get('tashkeel') or 'full')
+  pg=[[diacritics(l,tk) for l in p] for p in ayah_pages(text,W,H,fpath)];weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
   t=t0
   for i,(p,wt) in enumerate(zip(pg,weights)):
    end=t1 if i==len(pg)-1 else t+(t1-t0)*wt/tot
-   pages.append([text_png(p,W,H,work/('p%03d.png'%k),lm,float(spec.get('plate') or 0)),t,min(end,total_v)]);k+=1;t=end
+   pages.append([text_png(p,W,H,work/('p%03d.png'%k),fpath,stroke,float(spec.get('plate') or 0)),t,min(end,total_v)]);k+=1;t=end
  ayat=[a for a in ayat if any(a[0]==x[0] for x in spans)]
  last=ayat[-1][0]
  label='سورة '+surah_name(s)+' · '+(('الآية '+str(a).translate(AR_DIGITS)) if last==a else ('الآيات من '+str(a).translate(AR_DIGITS)+' إلى '+str(last).translate(AR_DIGITS)))
- chrome=chrome_png(W,H,label,spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo,title='سورة '+surah_name(s),sig=clean_sig(spec.get('sig')))
+ showt=bool(spec.get('title',False))
+ chrome=chrome_png(W,H,label if showt else '',spec.get('wm') or '',work/'chrome.png',bool(spec.get('vig',True)),logo,title=('سورة '+surah_name(s)) if showt else None,sig=clean_sig(spec.get('sig')))
  t0=time.time()
  mode=spec.get('bgmode') or 'every'
  bgs=[]
@@ -533,7 +573,7 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
   bgs=backgrounds(W,H,work,n,library)
   track=cycle_track(W,H,bgs,total_v,every,work/'track.mp4')
  for b in bgs:Path(b).unlink(missing_ok=True)
- out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4',dim=float(spec.get('dim') or 0) if clips else 0.0)
+ out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4',dim=float(spec.get('dim') or 0) if clips else 0.0,grade=bool(spec.get('grade',True)))
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),
            text=' '.join(ayah_text(s,n).translate(TANWEEN)+' ﴿'+str(n).translate(AR_DIGITS)+'﴾' for n,_,_ in ayat))
  return out,info
