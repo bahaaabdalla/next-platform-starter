@@ -12,8 +12,10 @@ let X={};   // {gate,deny,wake,wk,getPlatform,hasWorker} injected by api/index.j
 export const initReel=ctx=>{X=ctx};
 
 // Only reciters with full-surah recordings + timings (one continuous cut, no joins between ayat).
-const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"],["qatami","ناصر القطامي"],["dossari","ياسر الدوسري"]];
-const RNAME=Object.fromEntries([...RECITERS,["maher","ماهر المعيقلي"]]);
+const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"],["qatami","ناصر القطامي"],["dossari","ياسر الدوسري"],["maher","ماهر المعيقلي"],["fares","فارس عباد"],["tunaiji","خليفة الطنيجي"],["ajamy","أحمد العجمي"],["juhany","عبد الله الجهني"],["jibreel","محمد جبريل"]];
+// mujawwad / teaching recitations, shown in their own block
+const RECITERS_MJ=[["minshawi_mj","المنشاوي · مجوّد"],["basit_mj","عبد الباسط · مجوّد"],["tablawi","الطبلاوي · مجوّد"],["husary_mu","الحصري · المعلّم"]];
+const RNAME=Object.fromEntries([...RECITERS,...RECITERS_MJ]);
 // ---------- recitation length estimate (before the reel is made) ----------
 // everyayah serves constant-bitrate MP3s, so length ~= bytes*8/bitrate. The real bitrate is read once per reciter from an
 // MP3 frame header (falls back to the folder's nominal kbps); per-ayah seconds are cached in Redis for good.
@@ -151,7 +153,7 @@ export async function reelMessage(m,id,user,body){
     const v=parseVerse(body);
     if(!v){await send(id,"⚠️ مش قادر أفهم السورة أو الآية. "+VERSE_HELP);return true}
     await rwSet(user,{step:"reciter",surah:v.surah,frm:v.frm,to:v.to});
-    const rows=[];for(let i=0;i<RECITERS.length;i+=2)rows.push(RECITERS.slice(i,i+2).map(([k,n])=>({text:"🎙 "+n,callback_data:"rr:"+k})));rows.push([{text:"✖️ إلغاء",callback_data:"rs:x"}]);
+    const rows=reciterRows();
     await send(id,"📖 سورة "+SURAH[v.surah-1]+" · "+(v.to?("الآيات من "+ar(v.frm)+" إلى "+ar(v.to)):("من آية "+ar(v.frm)))+"\n\nاختار القارئ:",{inline_keyboard:rows});
     return true;
   }
@@ -217,6 +219,12 @@ function styView(y,back){
       [{text:"♻️ رجّع الافتراضي",callback_data:"rt:r"},{text:"↩️ رجوع",callback_data:back}]]}};
 }
 
+function reciterRows(){
+  const rows=[];for(let i=0;i<RECITERS.length;i+=2)rows.push(RECITERS.slice(i,i+2).map(([k,n])=>({text:"🎙 "+n,callback_data:"rr:"+k})));
+  rows.push([{text:"— تلاوات مجوّدة ومعلّم —",callback_data:"rr:_"}]);
+  for(let i=0;i<RECITERS_MJ.length;i+=2)rows.push(RECITERS_MJ.slice(i,i+2).map(([k,n])=>({text:"🎙 "+n,callback_data:"rr:"+k})));
+  rows.push([{text:"✖️ إلغاء",callback_data:"rs:x"}]);return rows;
+}
 // ---------- settings views ----------
 function durRows(st,plan,prefix){
   const DUR=[10,15,20,30,60,...(plan.cap>=120?[120]:[]),...(plan.cap>=180?[180]:[])];
