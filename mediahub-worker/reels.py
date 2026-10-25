@@ -41,7 +41,12 @@ def size_of(spec):return (HD if spec.get('hd') else SIZES)[spec['ar']]
 QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5,'minshawi_mj':8,'basit_mj':1,'husary_mu':12,'tunaiji':161}
 QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
 # mp3quran.net full-surah recordings with per-ayah timings (reciters quran.com has no timings for)
-MP3Q={'qatami':(86,'https://cdn.mp3quran.net/audio/nasser-qatami/r1/'),'dossari':(92,'https://cdn.mp3quran.net/audio/yasser-dosari/r1/')}
+_M='https://cdn.mp3quran.net/audio/'
+MP3Q={'qatami':(86,_M+'nasser-qatami/r1/'),'dossari':(92,_M+'yasser-dosari/r1/'),
+ # full-surah recordings with ayah timings (one continuous take, no per-ayah joins)
+ 'maher':(133,_M+'maher-muaiqly/r3/'),'fares':(81,_M+'fares-abbad/r1/'),'tablawi':(106,_M+'muhammad-tablawi/r1/'),
+ 'ajamy':(5,_M+'ahmad-ajmi/r1/'),'juhany':(62,_M+'abdullah-juhani/r1/'),
+ 'husary_mj':(119,_M+'mahmoud-husary/r2/'),'banna_mj':(122,_M+'mahmoud-banna/r2/'),'mustafa_mj':(288,_M+'mustafa-ismail/r2/')}
 MP3Q_API='https://mp3quran.net/api/v3/ayat_timing?surah=%d&read=%d'
 RECITERS={   # key -> (Arabic name, everyayah folder)
  'afasy':('مشاري راشد العفاسي','Alafasy_128kbps'),
@@ -64,6 +69,9 @@ RECITERS={   # key -> (Arabic name, everyayah folder)
  'ajamy':('أحمد بن علي العجمي','Ahmed_ibn_Ali_al-Ajamy_128kbps_ketaballah.net'),
  'juhany':('عبد الله عواد الجهني','Abdullaah_3awwaad_Al-Juhaynee_128kbps'),
  'jibreel':('محمد جبريل','Muhammad_Jibreel_128kbps'),
+ 'husary_mj':('محمود خليل الحصري (مجوّد)','Husary_Mujawwad_128kbps'),
+ 'banna_mj':('محمود علي البنا (مجوّد)','mahmoud_ali_al_banna_32kbps'),
+ 'mustafa_mj':('مصطفى إسماعيل (مجوّد)','Mustafa_Ismail_48kbps'),
 }
 # The bundled text uses the King Fahd complex encoding for "open" tanween; map it to the standard Unicode marks the font draws.
 TANWEEN=str.maketrans({'ٗ':'ࣰ','ٞ':'ࣱ','ٖ':'ࣲ'})
@@ -118,8 +126,8 @@ def clean_ayah(src,dest):
  """One ayah as plain PCM keeping the reciter's own breath around it: only silence beyond ~0.3 s before and
  ~0.45 s after the voice is removed, so joined ayat pause like the real recitation (no glued, cut-off feel).
  (Concatenating the MP3s directly decodes each file's first frame without its bit reservoir, which can blip.)"""
- af=('silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,areverse,'
-     'silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.45,afade=t=in:d=0.005,areverse,afade=t=in:d=0.005')
+ af=('silenceremove=start_periods=1:start_threshold=-62dB:start_silence=0.45,areverse,'
+     'silenceremove=start_periods=1:start_threshold=-62dB:start_silence=0.70,afade=t=in:d=0.08,areverse,afade=t=in:d=0.03')
  run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y','-i',str(src),'-af',af,'-ac','2','-ar','44100','-c:a','pcm_s16le',str(dest)],120)
  d=duration(dest)
  if d<0.3:   # trimming ate it (very quiet file): fall back to the untouched recitation
@@ -485,42 +493,40 @@ def compose(W,H,track,total,pages,chrome,audio,out,dim=0.0,grade=False):
 
 
 # ---------- moving video backgrounds (stock pool / Flow clips) ----------
-def norm_clip(src,W,H,dur,dest):
- """One clip -> exactly WxH, FPS, `dur` seconds (looped if shorter), muted."""
- run(list(FF)+['-stream_loop','-1','-i',str(src),'-t','%.3f'%dur,'-an',
-  '-vf','scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d,format=yuv420p'%(W,H,W,H,FPS)]+x264(16,'ultrafast')+[str(dest)],300)
+def norm_clip(src,W,H,dur,dest,ss=0.0,speed=1.0):
+ """One clip segment -> exactly WxH, FPS, `dur` seconds from `ss`, muted. Never looped or reversed;
+ speed<1 is a gentle slow-motion stretch used only to cover a slightly short clip."""
+ vf='scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1'%(W,H,W,H)
+ if speed<0.999:vf+=',setpts=PTS/%.4f'%speed
+ run(list(FF)+(['-ss','%.3f'%ss] if ss>0 else [])+['-i',str(src),'-t','%.3f'%dur,'-an',
+  '-vf',vf+',fps=%d,format=yuv420p'%FPS]+x264(16,'ultrafast')+[str(dest)],300)
  return dest
 
-def pingpong_unit(src,W,H,work):
- """A clip forward then backward: loops with no visible jump (slow nature motion hides the reversal)."""
- fwd=work/'pp_f.mp4';unit=work/'pp_unit.mp4'
- norm_clip(src,W,H,min(duration(src),12.0),fwd)
- run(list(FF)+['-i',str(fwd),'-filter_complex','[0:v]split[a][b];[b]reverse,trim=start_frame=1,setpts=PTS-STARTPTS[r];[a][r]concat=n=2:v=1:a=0[v]',
-  '-map','[v]']+x264(16,'ultrafast')+['-an',str(unit)],300)
- fwd.unlink(missing_ok=True)
- return unit
-
 def clips_track(W,H,clips,total,every,dest,work):
- """Real moving clips as the background: each shows `every` seconds and crossfades into the next; the sequence
- is rendered once as a seamless loop unit (last clip fades back into the first) and looped to the reel length."""
- clips=list(clips)
- if every<=0 or len(clips)==1 or total<=every+XF:
-  if duration(clips[0])+0.2>=total:return norm_clip(clips[0],W,H,total,dest)
-  unit=pingpong_unit(clips[0],W,H,work)
- else:
-  parts=[norm_clip(c,W,H,every+XF+0.05,work/('c%02d.mp4'%i)) for i,c in enumerate(clips+[clips[0]])]
-  args=list(FF);fl=[]
-  for pth in parts:args+=['-i',str(pth)]
-  cur='0:v';off=0.0
-  for i in range(1,len(parts)):
-   off+=every;fl.append('[%s][%d:v]xfade=transition=fade:duration=%.2f:offset=%.3f[x%d]'%(cur,i,XF,off,i));cur='x%d'%i
-  chain=work/'c_chain.mp4';unit=work/'c_unit.mp4'
-  run(args+['-filter_complex',';'.join(fl),'-map','['+cur+']','-r',str(FPS)]+x264(16,'ultrafast')+['-an',str(chain)],int(os.getenv('REEL_TIMEOUT','1200')))
-  run(list(FF)+['-ss','%.3f'%XF,'-i',str(chain),'-t','%.3f'%(len(clips)*every),'-an']+x264(16,'ultrafast')+[str(unit)],300)
-  for pth in parts:pth.unlink(missing_ok=True)
-  chain.unlink(missing_ok=True)
- run(list(FF)+['-stream_loop','-1','-i',str(unit),'-t','%.3f'%total,'-c','copy',str(dest)],300)
- unit.unlink(missing_ok=True)
+ """Real moving clips played forward, one after another with crossfades, until the reel length is covered.
+ No ping-pong/reverse and no looping: a clip that is reused starts from a different point of its footage."""
+ clips=list(clips);durs=[max(0.5,duration(c)) for c in clips]
+ if durs[0]+0.1>=total and (every<=0 or len(clips)==1):return norm_clip(clips[0],W,H,total,dest)
+ if len(clips)==1 and durs[0]*1.6>=total:   # a bit short: stretch it slightly instead of repeating
+  return norm_clip(clips[0],W,H,total,dest,speed=max(0.62,durs[0]/total))
+ L=max(3.0,float(every or 6))
+ segs=[];t=0.0;i=0;used={}
+ while t<total-0.05 and i<40:
+  k=i%len(clips);d=durs[k];seg=min(L,d,total-t+XF)
+  off=used.get(k,0.0)
+  if off+seg>d:off=0.0 if seg>=d else (off*0.37)%(d-seg)
+  used[k]=off+seg
+  segs.append((clips[k],off,max(seg,XF+0.3)));t+=segs[-1][2]-(XF if segs[1:] else 0);i+=1
+ if len(segs)==1:return norm_clip(segs[0][0],W,H,total,dest,ss=segs[0][1])
+ parts=[norm_clip(c,W,H,sg,work/('c%02d.mp4'%j),ss=o) for j,(c,o,sg) in enumerate(segs)]
+ args=list(FF);fl=[]
+ for pth in parts:args+=['-i',str(pth)]
+ cur='0:v';off=0.0
+ for j in range(1,len(parts)):
+  off+=segs[j-1][2]-XF
+  fl.append('[%s][%d:v]xfade=transition=fade:duration=%.2f:offset=%.3f[x%d]'%(cur,j,XF,off,j));cur='x%d'%j
+ run(args+['-filter_complex',';'.join(fl),'-map','['+cur+']','-t','%.3f'%total,'-r',str(FPS)]+x264(16,'ultrafast')+['-an',str(dest)],int(os.getenv('REEL_TIMEOUT','1200')))
+ for pth in parts:pth.unlink(missing_ok=True)
  return dest
 
 def backgrounds(W,H,work,n,library=()):
@@ -570,17 +576,17 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
  bgs=[]
  if clips:   # stock/Flow video clips: real motion, never deleted (they live in the shared pool)
   every=0 if mode=='static' else max(3.0,min(float(spec.get('bgsec') or 5),30.0))
-  n=1 if mode=='static' else max(2,min(int(spec.get('bgn') or 4),8))
+  n=1 if mode=='static' else len(clips)
   track=clips_track(W,H,list(clips)[:n],total_v,every,work/'track.mp4',work)
  elif mode=='ayah':
   cuts=scene_cuts(spans,total_v)[:11]
   bgs=backgrounds(W,H,work,len(cuts)+1,library)
-  track=stills_track(W,H,bgs,total_v,work/'track.mp4',segs=segments_for_cuts(cuts,total_v))
+  track=stills_track(W,H,bgs,total_v,work/'track.mp4',move=False,segs=segments_for_cuts(cuts,total_v))
  else:
   every=0 if mode=='static' else max(2.0,min(float(spec.get('bgsec') or 5),30.0))
   n=1 if mode=='static' else max(2,min(int(spec.get('bgn') or 4),8))
   bgs=backgrounds(W,H,work,n,library)
-  track=cycle_track(W,H,bgs,total_v,every,work/'track.mp4')
+  track=cycle_track(W,H,bgs,total_v,every,work/'track.mp4',move=False)   # Quran: no sliding pans
  for b in bgs:Path(b).unlink(missing_ok=True)
  out=compose(W,H,track,total_v,pages,chrome,audio,work/'reel.mp4',dim=float(spec.get('dim') or 0) if clips else 0.0,grade=bool(spec.get('grade',True)))
  info=dict(surah=s,name=surah_name(s),frm=a,to=last,reciter=name,duration=total_v,width=W,height=H,render_s=round(time.time()-t0,1),
