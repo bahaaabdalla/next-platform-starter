@@ -38,7 +38,7 @@ SIZES={'9:16':(720,1280),'16:9':(1280,720)}
 HD={'9:16':(1080,1920),'16:9':(1920,1080)}   # paid reels
 def size_of(spec):return (HD if spec.get('hd') else SIZES)[spec['ar']]
 # Full-surah recordings with per-ayah timestamps (quran.com / quranicaudio): one continuous cut, no joins at all.
-QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5}
+QDC={'afasy':7,'basit':2,'husary':6,'minshawi':9,'sudais':3,'shatri':4,'shuraym':10,'rifai':5,'minshawi_mj':8,'basit_mj':1,'husary_mu':12,'tunaiji':161}
 QDC_API='https://api.quran.com/api/v4/chapter_recitations/%d/%d?segments=true'
 # mp3quran.net full-surah recordings with per-ayah timings (reciters quran.com has no timings for)
 MP3Q={'qatami':(86,'https://cdn.mp3quran.net/audio/nasser-qatami/r1/'),'dossari':(92,'https://cdn.mp3quran.net/audio/yasser-dosari/r1/')}
@@ -55,6 +55,15 @@ RECITERS={   # key -> (Arabic name, everyayah folder)
  'shuraym':('سعود الشريم','Saood_ash-Shuraym_128kbps'),
  'rifai':('هاني الرفاعي','Hani_Rifai_192kbps'),
  'qatami':('ناصر القطامي','Nasser_Alqatami_128kbps'),
+ 'minshawi_mj':('محمد صديق المنشاوي (مجوّد)','Minshawy_Mujawwad_192kbps'),
+ 'basit_mj':('عبد الباسط عبد الصمد (مجوّد)','Abdul_Basit_Mujawwad_128kbps'),
+ 'husary_mu':('محمود خليل الحصري (المعلّم)','Husary_Muallim_128kbps'),
+ 'tunaiji':('خليفة الطنيجي','khalefa_al_tunaiji_64kbps'),
+ 'fares':('فارس عباد','Fares_Abbad_64kbps'),
+ 'tablawi':('محمد محمود الطبلاوي','Mohammad_al_Tablaway_128kbps'),
+ 'ajamy':('أحمد بن علي العجمي','Ahmed_ibn_Ali_al-Ajamy_128kbps_ketaballah.net'),
+ 'juhany':('عبد الله عواد الجهني','Abdullaah_3awwaad_Al-Juhaynee_128kbps'),
+ 'jibreel':('محمد جبريل','Muhammad_Jibreel_128kbps'),
 }
 # The bundled text uses the King Fahd complex encoding for "open" tanween; map it to the standard Unicode marks the font draws.
 TANWEEN=str.maketrans({'ٗ':'ࣰ','ٞ':'ࣱ','ٖ':'ࣲ'})
