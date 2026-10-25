@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 app=FastAPI(docs_url=None,redoc_url=None)
 DATA=Path(os.getenv('MEDIA_DATA_DIR','/tmp/bmediahub'));DATA.mkdir(parents=True,exist_ok=True)
-jobs={};lock=threading.Lock();pool=ThreadPoolExecutor(max_workers=2)
+jobs={};lock=threading.Lock();pool=ThreadPoolExecutor(max_workers=1)   # downloads: one at a time, the CPU belongs to reels
 hosts=('youtu.be','youtube.com','tiktok.com','instagram.com','facebook.com','fb.watch')
 PHOTO_EXT=('.jpg','.jpeg','.png','.webp');VIDEO_EXT=('.mp4','.webm')
 DAILY_LIMIT=int(os.getenv('DAILY_LIMIT','100000'))   # per-user quotas are enforced by the Vercel front (Redis); this is only a safety net
@@ -635,7 +635,6 @@ def quran_reel(spec,work,lib,logo,on_stage=None):
 def batch_job(rid,spec,work,lib,logo):
  """Ready-made pack: several Quran reels in one queue slot, each sent as soon as it is done and charged as one reel."""
  items=spec.get('items') or [];done=0
- talk(spec['chat_id'],'⚡ بدأت أجهّز %d ريلز جاهزة للنشر. هيوصلوا واحد ورا التاني.'%len(items))
  for i,it in enumerate(items):
   sub=dict(spec);sub.update(it);sub.pop('items',None);sub.pop('dim',None);sub.pop('plate',None);w=work/('b%d'%i)
   try:
@@ -657,10 +656,9 @@ def reel_job(rid,spec):
   if quran and spec.get('items'):
    batch_job(rid,spec,work,lib,logo);return
   if quran:
-   out,info,cap=quran_reel(spec,work,lib,logo,on_stage=lambda st:talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…'))
+   out,info,cap=quran_reel(spec,work,lib,logo,on_stage=None)   # one confirmation (from the bot), then the reel itself
    markup=continue_markup(spec,info)
   else:
-   talk(spec['chat_id'],'🎬 بدأ تجهيز الفيديو…')
    src=work/'src';src.mkdir(exist_ok=True)
    audio=video=None;images=[]
    if spec.get('audio_file'):audio=tg_file(spec['audio_file'],src/'audio.bin')
