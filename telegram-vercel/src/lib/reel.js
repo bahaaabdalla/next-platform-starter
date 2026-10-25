@@ -363,7 +363,8 @@ async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   if(j.httpStatus===429)return send(id,"⏳ في ضغط كبير على السيرفر دلوقتي. دوس «اعمل الريل» تاني بعد دقيقة.",retryKb);
   if(j.httpStatus>=400)return send(id,"⚠️ تعذر عمل الريل بالإعدادات دي.");
   await rwDel(user);if(onOk)await onOk();
-  return send(id,(okText||"✅ استلمت طلب الريل")+(j.busy?"\n⏳ في ضغط بسيط دلوقتي، أول ما الفيديو يخلص هيوصلك.":(okText?"":"\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق)."))+"\n\n💡 نصيحة: خلّي الريل من 20 لـ 30 ثانية عشان يوصلك أسرع وبجودة أحلى.");
+  // one message only: the "sending…" message becomes the confirmation, then the reel itself arrives
+  return edit((okText||"✅ استلمت طلب الريل")+(j.busy?"\n⏳ في ضغط بسيط دلوقتي، أول ما الفيديو يخلص هيوصلك.":okText?"":"\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق).")+"\n\n💡 نصيحة: الريل من 15 لـ 20 ثانية أفضل للخوارزميات والانتشار، ويوصلك أسرع وبجودة أحلى.");
 }
 
 export async function reelCallback(q,d,id,user){
