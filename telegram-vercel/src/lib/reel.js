@@ -12,10 +12,11 @@ let X={};   // {gate,deny,wake,wk,getPlatform,hasWorker} injected by api/index.j
 export const initReel=ctx=>{X=ctx};
 
 // Only reciters with full-surah recordings + timings (one continuous cut, no joins between ayat).
-const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"],["qatami","ناصر القطامي"],["dossari","ياسر الدوسري"],["maher","ماهر المعيقلي"],["fares","فارس عباد"],["tunaiji","خليفة الطنيجي"],["ajamy","أحمد العجمي"],["juhany","عبد الله الجهني"],["jibreel","محمد جبريل"]];
+const RECITERS=[["afasy","مشاري العفاسي"],["basit","عبد الباسط"],["husary","الحصري"],["minshawi","المنشاوي"],["sudais","السديس"],["shatri","أبو بكر الشاطري"],["shuraym","سعود الشريم"],["rifai","هاني الرفاعي"],["qatami","ناصر القطامي"],["dossari","ياسر الدوسري"],["maher","ماهر المعيقلي"],["fares","فارس عباد"],["tunaiji","خليفة الطنيجي"],["ajamy","أحمد العجمي"],["juhany","عبد الله الجهني"],["tablawi","محمد الطبلاوي"]];
 // mujawwad / teaching recitations, shown in their own block
-const RECITERS_MJ=[["minshawi_mj","المنشاوي · مجوّد"],["basit_mj","عبد الباسط · مجوّد"],["tablawi","الطبلاوي · مجوّد"],["husary_mu","الحصري · المعلّم"]];
-const RNAME=Object.fromEntries([...RECITERS,...RECITERS_MJ]);
+const RECITERS_MJ=[["basit_mj","عبد الباسط · مجوّد"],["husary_mj","الحصري · مجوّد"],["mustafa_mj","مصطفى إسماعيل · مجوّد"],["banna_mj","محمود علي البنا · مجوّد"],["husary_mu","الحصري · المعلّم"]];
+const RETIRED=[["minshawi_mj","المنشاوي · مجوّد"],["jibreel","محمد جبريل"]];   // old buttons/settings still resolve to a name
+const RNAME=Object.fromEntries([...RETIRED,...RECITERS,...RECITERS_MJ]);
 // ---------- recitation length estimate (before the reel is made) ----------
 // everyayah serves constant-bitrate MP3s, so length ~= bytes*8/bitrate. The real bitrate is read once per reciter from an
 // MP3 frame header (falls back to the folder's nominal kbps); per-ayah seconds are cached in Redis for good.
@@ -268,7 +269,7 @@ function quranView(st,plan){
     }else info+="\n🕰 في المدة دي هيتقرأ من آية "+ar(st.frm)+" لحد آية "+ar(upto)+" · الريل حوالي "+len;
     if(sm.n===1&&est[0]>lim+1)info+="\nℹ️ أول آية لوحدها أطول من المدة، فهتتقري كاملة";
   }
-  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديو طبيعة حقيقي (Pexels/Pixabay) · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+(bgsrcOf(st)==="stock"?"":(st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n📝 الكتابة: "+(st.lines?"سطرين سطرين مع الصوت":"الآية كاملة على الشاشة")+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
+  const text="🎬 إعدادات الريل\n\n📖 سورة "+SURAH[st.surah-1]+" · "+range+"\n🎙 القارئ: "+RNAME[st.reciter]+"\n"+info+"\n📐 المقاس: "+st.ar+"\n🖼 الخلفيات: "+(bgsrcOf(st)==="lib"?"من مكتبة الخلفيات ("+(st.libn||0)+" صورة)":bgsrcOf(st)==="stock"?"فيديو طبيعة حقيقي (Pexels/Pixabay) · "+TNAME[st.theme||"mix"]:"صور تلقائية من السيرفر")+(bgsrcOf(st)==="stock"?"":(st.bgsec??5)?" · تتغير كل "+(st.bgsec??5)+" ثواني ("+(st.bgn||4)+" خلفيات بالتتابع)":" · خلفية واحدة ثابتة")+"\n📝 الكتابة: سطر واحد مع الصوت"+"\n🌑 الفينييت: "+(st.vig?"شغال":"مقفول")+"\n✍️ توقيع الصفحة: "+(st.sig||"مفيش")+"\n💧 العلامة المائية: "+(plan.wm?"موجودة (تتلغي بالاشتراك /plans)":plan.launch?"ملغية (هدية فترة الإطلاق)":"ملغية");
   return {text,kb:{inline_keyboard:rows}};
 }
 const LINK_LABEL={audio:"الصوت بس",video:"الفيديو من غير صوته",both:"الفيديو بصوته"};
