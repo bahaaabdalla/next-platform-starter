@@ -205,7 +205,7 @@ export async function reelMessage(m,id,user,body){
 
 
 // ---------- verse style (saved per user) ----------
-const STY_DEF={font:"hafs",tashkeel:"full",stroke:"none",grade:true,title:false};
+const STY_DEF={font:"hafs",tashkeel:"light",stroke:"none",grade:true,title:false};
 const FONTS_AR=[["hafs","عثماني (المصحف)"],["medium","نسخ متوسط"],["bold","عثماني عريض"],["naskh","نسخ رفيع"],["classic","كلاسيك"]];
 const TK_AR={full:"كامل",light:"خفيف",none:"من غير تشكيل"};
 const styKey=u=>P+"rsty:"+u;
@@ -308,12 +308,12 @@ export function packItems(n=3,theme="mix",dur=45,cap=60){
   const len=()=>Math.min(cap,dur==="rand"?20+5*Math.floor(Math.random()*9):Number(dur)||45);
   return ps.map(([surah,frm],i)=>({surah,frm,to:null,reciter:rs[i%rs.length],theme:theme==="mix"?ts[i%ts.length]:theme,maxdur:len()}));
 }
-const PACK_DURS=[[20,"20ث"],[30,"30ث"],[45,"45ث"],[60,"دقيقة"],["rand","🎲 عشوائي"]];
+const PACK_DURS=[[20,"20ث"],[30,"30ث"],["rand","🎲 عشوائي"]];   // pack reels stay light: 30 s max
 const sizesFor=c=>c.packMax>=5?[3,5]:[3];
 const packKey=u=>P+"pack:"+u+":"+new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Cairo"});
 function packView(st,c){
-  const n=st.pn||3,bg=st.pbg||"calm",du=st.pdu??45;
-  return {text:"⚡ ريلز قرآن جاهزة للنشر\n\nكل ريل: آيات مختارة، وقارئ مختلف، وخلفية فيديو حقيقية بجودة 1080، والكتابة سطر واحد ماشي مع الصوت (بشكل الكتابة اللي مختاره من «✍️ شكل الكتابة»).\n\n🔢 العدد: "+n+" ريلز\n⏱ مدة كل ريل: "+(du==="rand"?"عشوائية من 20 ثانية لدقيقة (كل ريل مدة مختلفة)":"حوالي "+du+" ثانية (بيقف عند آخر آية كاملة)")+"\n🖼 الخلفيات: "+Object.fromEntries(PACK_BG)[bg]+"\n\nمرة واحدة في اليوم، والريلز بتتحسب من رصيدك اليومي.",
+  const n=st.pn||3,bg=st.pbg||"calm",du=st.pdu==="rand"?"rand":Math.min(Number(st.pdu)||30,30);
+  return {text:"⚡ ريلز قرآن جاهزة للنشر\n\nكل ريل: آيات مختارة، وقارئ مختلف، وخلفية فيديو حقيقية بجودة 1080، والكتابة سطر واحد ماشي مع الصوت (بشكل الكتابة اللي مختاره من «✍️ شكل الكتابة»).\n\n🔢 العدد: "+n+" ريلز\n⏱ مدة كل ريل: "+(du==="rand"?"عشوائية من 20 لـ 30 ثانية (كل ريل مدة مختلفة)":"حوالي "+du+" ثانية (بيقف عند آخر آية كاملة)")+"\n🖼 الخلفيات: "+Object.fromEntries(PACK_BG)[bg]+"\n\nمرة واحدة في اليوم، والريلز بتتحسب من رصيدك اليومي.",
     kb:{inline_keyboard:[sizesFor(c).map(k=>({text:(k===n?"✅ ":"")+k+" ريلز",callback_data:"rp:n"+k})),
       PACK_DURS.map(([k,l])=>({text:(String(k)===String(du)?"✅ ":"")+l,callback_data:"rp:d"+k})),
       ...[0,2,4,6,8].map(i=>PACK_BG.slice(i,i+2).map(([k,l])=>({text:(k===bg?"✅ ":"")+l,callback_data:"rp:b"+k}))),
@@ -332,7 +332,7 @@ async function packGuard(user,n,edit){
 }
 async function reelPack(id,user,edit){
   if(!(await packGuard(user,3,edit)))return;
-  const st={step:"pack",pn:3,pbg:"calm",pdu:45};await rwSet(user,st);const v=packView(st,await getCfg());return edit(v.text,v.kb);
+  const st={step:"pack",pn:3,pbg:"calm",pdu:30};await rwSet(user,st);const v=packView(st,await getCfg());return edit(v.text,v.kb);
 }
 async function packCallback(id,user,d,st,edit){
   if(!st||st.step!=="pack")return reelPack(id,user,edit);
@@ -343,7 +343,7 @@ async function packCallback(id,user,d,st,edit){
   if(d!=="rp:go"){await rwSet(user,st);const v=packView(st,c);return edit(v.text,v.kb)}
   const g=await packGuard(user,st.pn,edit);if(!g)return;
   const sig=await sigGet(user),lib=await libraryFor({ar:"9:16"});
-  return submit(id,user,g.plan,g.used,{source:"quran",items:packItems(st.pn,st.pbg,st.pdu??45,Math.min(60,g.plan.cap)),bgsrc:"stock",theme:st.pbg,ar:"9:16",maxdur:Math.min(60,g.plan.cap),vig:false,...styPayload(await styGet(user)),hd:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
+  return submit(id,user,g.plan,g.used,{source:"quran",items:packItems(st.pn,st.pbg,st.pdu==="rand"?"rand":Math.min(Number(st.pdu)||30,30),Math.min(30,g.plan.cap)),bgsrc:"stock",theme:st.pbg,ar:"9:16",maxdur:Math.min(30,g.plan.cap),vig:false,...styPayload(await styGet(user)),hd:true,sig,bgmode:"static",logo:lib.logo,bgs:[]},
     {inline_keyboard:[[{text:"🔁 جرّب تاني",callback_data:"rp:go"}]]},edit,()=>cmd("SET",packKey(user),"1","EX","172800"),"⚡ استلمت طلب الـ "+st.pn+" ريلز. هيوصلوا هنا واحد ورا التاني خلال كام دقيقة.");
 }
 
@@ -363,7 +363,7 @@ async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   if(j.httpStatus===429)return send(id,"⏳ في ضغط كبير على السيرفر دلوقتي. دوس «اعمل الريل» تاني بعد دقيقة.",retryKb);
   if(j.httpStatus>=400)return send(id,"⚠️ تعذر عمل الريل بالإعدادات دي.");
   await rwDel(user);if(onOk)await onOk();
-  return send(id,(okText||"✅ استلمت طلب الريل")+(j.busy?"\n⏳ في ضغط بسيط دلوقتي، أول ما الفيديو يخلص هيوصلك.":(okText?"":"\nهيوصلك الفيديو هنا أول ما يخلص.")));
+  return send(id,(okText||"✅ استلمت طلب الريل")+(j.busy?"\n⏳ في ضغط بسيط دلوقتي، أول ما الفيديو يخلص هيوصلك.":(okText?"":"\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق)."))+"\n\n💡 نصيحة: خلّي الريل من 20 لـ 30 ثانية عشان يوصلك أسرع وبجودة أحلى.");
 }
 
 export async function reelCallback(q,d,id,user){
