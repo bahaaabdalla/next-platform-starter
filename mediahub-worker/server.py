@@ -616,14 +616,14 @@ def quran_reel(spec,work,lib,logo,on_stage=None):
   # Kaaba: good free video is rare, so high-resolution photos crossfading with a slow pan + vignette
   imgs,cr,band=stock.photo_pick(spec['theme'],5)
   if imgs:
-   spec.update(bgmode='every',bgsec=6,bgn=len(imgs),vig=True,plate=reels.plate_for(band))
+   spec.update(bgmode='every',bgsec=6,bgn=len(imgs),vig=True,plate=0.0)   # no dark box behind the verses
    out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=[str(p) for p in imgs],logo=logo,clips=())
    return out,info,reels.caption(info)+'\n🖼 الصور: '+cr
  if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
   orient='h' if spec.get('ar')=='16:9' else 'v'
   # exclusive: fresh 1080p+ video(s) fetched now for this subscriber only, never reused for anyone else
   vs,credit,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work,hd=bool(spec.get('hd')))
-  if vs:clips=vs;spec['dim']=reels.dim_for(band);spec['plate']=reels.plate_for(band)
+  if vs:clips=vs;spec['dim']=reels.dim_for(band);spec['plate']=0.0   # bright clips get dimmed, never a dark box
   else:   # providers down: unused clips from the local pool (also marked as given out)
    n=1 if spec.get('bgmode')=='static' else max(2,min(int(float(spec.get('maxdur') or 30)/max(3.0,float(spec.get('bgsec') or 5)))+2,8))
    clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
