@@ -44,7 +44,10 @@ THEMES={
  'flowers':('زهور وحقول',['flower field','wheat field wind','meadow flowers','lavender field']),
  'kaaba':('الكعبة ومكة',['kaaba','mecca','masjid al haram','makkah']),
  'mosque':('مساجد',['mosque','mosque aerial','mosque sunset','mosque minaret']),
- 'calm':('هادية',['mosque night','rain window night','dark clouds sky','foggy mountains','street lamp night','candle dark','night city lights bokeh','misty lake dawn']),
+ 'calm':('هادية',[   # the reference vibe: misty, moody, muted water and greenery (+ a few calm non-nature shots)
+   'misty river','mountain stream fog','waterfall mist','river rocks forest','foggy forest','rainforest river',
+   'misty lake','fog mountains clouds','rain forest','stream moss rocks','overcast ocean waves','rain on window',
+   'mosque fog','clouds timelapse mountains']),
 }
 CROWD_OK={'kaaba','mosque'}   # the Haram is never empty: only close-up faces disqualify a clip there
 SIZE={'v':(1080,1920),'h':(1920,1080)}
