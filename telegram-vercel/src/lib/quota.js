@@ -10,7 +10,7 @@ export const isAdmin=id=>ADMINS().includes(String(id));
 export async function getCfg(){
   return parseCfg(obj(await cmd("HGETALL",P+"cfg")));
 }
-const parseCfg=o=>({main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50",
+const parseCfg=o=>({tutvid:o.tutvid||"",main:o.main||"",maint:o.maint==="1",daily:num(o.daily,2),welcome:num(o.welcome,5),bonus:num(o.bonus,5),contact:o.contact||"",launch:num(o.launch,0),freecap:num(o.freecap,0),paynum:o.paynum||"",payinsta:o.payinsta||"",price:o.price||"50",
   // reel plans (editable from the web panel)
   fDaily:num(o.f_daily,1),fCap:num(o.f_cap,60),fHd:o.f_hd==="1",pDaily:num(o.p_daily,10),pCap:num(o.p_cap,180),packOn:o.pack!=="0",packMax:num(o.pack_max,5),chanDays:num(o.chan_days,-1)});
 // Config + user state in ONE Redis round trip (the gate runs on every message and tap, so it must be fast).
@@ -98,6 +98,7 @@ export function reelPlan(id,user,cfg){
   if(user.nowm==="1")p.wm=false;
   if(k==="0"&&cfg&&cfg.launch>Date.now()){p.wm=false;p.launch=cfg.launch}
   if(cfg){p.daily=k==="0"?cfg.fDaily:cfg.pDaily;p.cap=k==="0"?cfg.fCap:cfg.pCap}
+  if(Number(user.rlim)>0)p.daily=Number(user.rlim);   // per-user override set from the web panel
   p.hd=k!=="0"||!!(cfg&&cfg.fHd);
   if(isAdmin(id)){p.daily=1e9;p.cap=Math.max(180,p.cap);p.hd=true}
   return p;

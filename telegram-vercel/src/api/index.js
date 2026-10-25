@@ -112,6 +112,7 @@ async function message(m,u){
     const [acc,rs]=await Promise.all([account(user,await getCfg()),reelState(user)]);
     return send(id,describe(acc)+"\n\n🎬 ريلز النهاردة: "+rs.used+" من "+(rs.plan.daily>1e6?"∞":rs.plan.daily)+"\n"+planLine(rs.plan));
   }
+  if(body.startsWith("/help")&&redisOn()){const hc=await getCfg();if(hc.tutvid)await tg("sendVideo",{chat_id:id,video:hc.tutvid,caption:"🎥 فيديو شرح البوت"}).catch(()=>{})}
   if(body.startsWith("/help"))return send(id,"📖 الأوامر:\n/start — القائمة\n/reel — صانع الريلز\n/plans — باقات الريلز\n/me — رصيدي\n/help — المساعدة\n/terms — الشروط\n/status — الحالة\n/tools — الأدوات\n/wake — تنشيط الخادم\n/id — رقم حسابك\n\n"+HOWTO+"\n\nابعت رابط عام من المنصات الأربع.",menu);
   if(body.startsWith("/tools"))return send(id,"🛠 أدوات: فيديو، MP3، غلاف، ضغط، GIF، WebM، وصف المنشور، وتحميل الصور (كلها / صورة معينة / ZIP عند الطلب).",menu);
   if(body.startsWith("/wake")){if(!WORKER||!WKEY)return send(id,"⚠️ خادم المعالجة غير مربوط.");return send(id,(await wake(id))?"✅ الخادم صاحي وجاهز. ابعت الرابط.":"⌛ الخادم لسه بيصحى، جرّب /wake تاني بعد دقيقة.")}

@@ -105,6 +105,8 @@ export async function adminCommand(body,id){
     await pipe((w==="all"?["916","169"]:[w]).map(o=>["DEL",P+"bgs:"+o]));await send(id,"🗑 اتمسحت خلفيات "+w);return true}
   case "/logo":{if((a[0]||"").toLowerCase()==="off"){await pipe([["HDEL",P+"cfg","logo"],["DEL",P+"admcap:"+id]]);await send(id,"✅ اتشال اللوجو، والعلامة المكتوبة رجعت.");return true}
     await cmd("SET",P+"admcap:"+id,"logo","EX","1800");await send(id,"🖼 ابعت اللوجو دلوقتي (PNG بخلفية شفافة، كملف أفضل). /logo off لشيله.");return true}
+  case "/tutorial":{if((a[0]||"").toLowerCase()==="off"){await pipe([["HDEL",P+"cfg","tutvid"],["DEL",P+"admcap:"+id]]);await send(id,"✅ اتشال فيديو الشرح.");return true}
+    await cmd("SET",P+"admcap:"+id,"tut","EX","1800");await send(id,"🎥 ابعت فيديو الشرح دلوقتي. هيتحفظ، ويتبعت أوتوماتيك لكل مشترك أول ما اشتراكه يتفعّل، وكمان في /help.\n/tutorial off لشيله.");return true}
   case "/broadcast":{if(!arg){await send(id,"الاستخدام: /broadcast نص الرسالة");return true}
     const ids=await cmd("SMEMBERS",P+"users");let ok=0,fail=0,i=0;const end=Date.now()+48000;
     for(;i<ids.length&&Date.now()<end;i++){try{await send(ids[i],arg);ok++}catch{fail++}await sleep(40)}

@@ -31,8 +31,8 @@ async function auth(req){
 async function allUsers(){
   const ids=(await cmd("SMEMBERS",P+"users"))||[],out=[];
   for(let i=0;i<ids.length;i+=1000){
-    const part=ids.slice(i,i+1000),rows=await pipe(part.map(u=>["HMGET",P+"u:"+u,"reg","cdate","name","uname","plan","pexp","ban","src","unl","nowm"]));
-    part.forEach((u,j)=>{const r=rows[j]||[];out.push({id:u,reg:n(r[0]),cdate:r[1]||"",name:r[2]||"",uname:r[3]||"",pro:r[4]==="pro"&&n(r[5])>Date.now(),pexp:n(r[5]),ban:r[6]==="1",src:r[7]||"",unl:r[8]==="1",nowm:r[9]==="1"})});
+    const part=ids.slice(i,i+1000),rows=await pipe(part.map(u=>["HMGET",P+"u:"+u,"reg","cdate","name","uname","plan","pexp","ban","src","unl","nowm","rlim"]));
+    part.forEach((u,j)=>{const r=rows[j]||[];out.push({id:u,reg:n(r[0]),cdate:r[1]||"",name:r[2]||"",uname:r[3]||"",pro:r[4]==="pro"&&n(r[5])>Date.now(),pexp:n(r[5]),ban:r[6]==="1",src:r[7]||"",unl:r[8]==="1",nowm:r[9]==="1",rlim:n(r[10])})});
   }
   return out;
 }
@@ -102,6 +102,7 @@ async function userAction(b,admin){
   case "nowm":await cmd("HSET",P+"u:"+u,"nowm",cur.nowm==="1"?"0":"1");return {};
   case "unl":await cmd("HSET",P+"u:"+u,"unl",cur.unl==="1"?"0":"1");return {};
   case "grant":{const k=Number(b.n);if(!(Number.isInteger(k)&&k>0&&k<=1000))throw Error("عدد غير صحيح");await cmd("HINCRBY",P+"u:"+u,"wel",String(k*3));return {}}
+  case "rlim":{const k=Number(b.n);if(!(Number.isInteger(k)&&k>=0&&k<=200))throw Error("الحد من 0 لـ 200 (0 = زي باقته)");if(k)await cmd("HSET",P+"u:"+u,"rlim",String(k));else await cmd("HDEL",P+"u:"+u,"rlim");return {}}
   case "msg":{const t=String(b.text||"").trim().slice(0,3500);if(!t)throw Error("الرسالة فاضية");await send(Number(u),t);return {}}
   }
   throw Error("إجراء غير معروف");

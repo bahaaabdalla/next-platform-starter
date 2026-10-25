@@ -177,6 +177,7 @@ function userSheet(u){
    '<p class="small muted">'+(u.uname?'<a href="https://t.me/'+esc(u.uname)+'" target="_blank">@'+esc(u.uname)+'</a> · ':"")+'🆔 '+u.id+' · سجّل '+dd(u.reg)+(u.src?' · جه من '+esc(u.src):"")+'</p>'+
    '<p>'+(u.pro?'<span class="pill ok">مشترك لحد '+dd(u.pexp)+'</span> ':'<span class="pill n">مجاني</span> ')+(u.ban?'<span class="pill bad">محظور</span> ':"")+(u.nowm?'<span class="pill n">بدون علامة مائية</span> ':"")+(u.unl?'<span class="pill n">غير محدود</span>':"")+'</p>'+
    '<label>تفعيل / تمديد الباقة المميزة (أيام)</label><div class="copy"><input type="number" id="pd" value="30" min="1" max="366"><button class="btn ok" data-x="pro">تفعيل</button></div>'+
+   '<label>حد الـ Reels اليومي للمستخدم ده</label><div class="copy"><input type="number" id="rl" value="'+(u.rlim||0)+'" min="0" max="200"><button class="btn" data-x="rlim">حفظ</button></div><div class="help">0 = زي باقته العادية. أي رقم تاني بيبقى حده اليومي هو لوحده (مجاني أو مشترك).</div>'+
    '<label>إضافة تحميلات مجانية</label><div class="copy"><input type="number" id="gn" value="5" min="1" max="1000"><button class="btn" data-x="grant">إضافة</button></div>'+
    '<label>رسالة للمستخدم ده</label><textarea id="um" placeholder="اكتب الرسالة…"></textarea><div class="actions"><button class="btn" data-x="msg">إرسال</button></div>'+
    '<div class="actions" style="margin-top:18px">'+(u.pro?'<button class="btn ghost" data-x="unpro">إلغاء الباقة</button>':"")+'<button class="btn ghost" data-x="nowm">'+(u.nowm?"رجّع العلامة المائية":"شيل العلامة المائية")+'</button><button class="btn ghost" data-x="unl">'+(u.unl?"إلغاء غير محدود":"تحميل غير محدود")+'</button><button class="btn '+(u.ban?"ok":"bad")+'" data-x="'+(u.ban?"unban":"ban")+'">'+(u.ban?"فك الحظر":"حظر")+'</button></div>';
@@ -184,7 +185,7 @@ function userSheet(u){
   const close=()=>sh.classList.remove("on");$("#cls").onclick=close;sh.onclick=e=>{if(e.target===sh)close()};
   inn.querySelectorAll("[data-x]").forEach(b=>b.onclick=async()=>{
     const act=b.dataset.x,body={uid:u.id,act};
-    if(act==="pro")body.days=$("#pd").value;if(act==="grant")body.n=$("#gn").value;if(act==="msg")body.text=$("#um").value;
+    if(act==="pro")body.days=$("#pd").value;if(act==="grant")body.n=$("#gn").value;if(act==="rlim")body.n=$("#rl").value;if(act==="msg")body.text=$("#um").value;
     if(act==="ban"&&!confirm("حظر المستخدم ده؟"))return;
     b.disabled=true;
     try{await api("user",body);toast("✅ تم");if(act==="msg"){$("#um").value="";b.disabled=false;return}users=null;close();usersTab()}catch(e){toast("⚠️ "+e.message);b.disabled=false}

@@ -76,6 +76,7 @@ export async function decideRequest(rid,act,adminId){
     try{await purchase(u,price,r.phone,rid)}catch(e){console.error("capi buy",e.message)}
     const pc=await getCfg();
     await send(Number(u),"🎉 تم تفعيل "+PLANS.pro.name+" لحد "+day(exp)+".\n"+pc.pDaily+" ريلز يوميًا، لحد "+mins(pc.pCap)+"، بجودة 1080 ومن غير علامة مائية"+(pc.packOn?"، وزرار «⚡ ريلز جاهزة» بقى مفتوح لك":"")+". ابدأ من /reel").catch(()=>{});
+    if(pc.tutvid)try{await tg("sendVideo",{chat_id:Number(u),video:pc.tutvid,caption:"🎥 فيديو شرح البوت كامل: إزاي تعمل Reels، و«Reels جاهزة»، وإعدادات الكتابة."})}catch(e){console.error("tutvid",e.message)}
     note="✅ اتقبل · الاشتراك لحد "+day(exp);
   }else{
     await pipe([["HSET",P+"payreq:"+rid,"status","rejected","by",String(adminId),"at",String(Date.now())],["DEL",P+"payopen:"+u],["HINCRBY",P+"paystats","rejected","1"]]);
