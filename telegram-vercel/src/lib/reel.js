@@ -360,10 +360,10 @@ async function submit(id,user,plan,used,payload,retryKb,edit,onOk,okText){
   await unlock();
   if(j.error)return send(id,"⚠️ خادم المعالجة مش متاح مؤقتًا. جرّب تاني.",retryKb);
   if(j.httpStatus===409)return send(id,"⏳ عندك ريل لسه بيتعمل. استنى يوصلك وبعدين اعمل التاني.");
-  if(j.httpStatus===429)return send(id,"🚦 الطابور مليان دلوقتي. جرّب بعد كام دقيقة.",retryKb);
+  if(j.httpStatus===429)return send(id,"⏳ في ضغط كبير على السيرفر دلوقتي. دوس «اعمل الريل» تاني بعد دقيقة.",retryKb);
   if(j.httpStatus>=400)return send(id,"⚠️ تعذر عمل الريل بالإعدادات دي.");
   await rwDel(user);if(onOk)await onOk();
-  return send(id,(okText||"✅ استلمت طلب الريل")+(j.position>1?" · ترتيبك في الطابور: "+j.position:"")+(okText?"":".\nهيوصلك الفيديو هنا أول ما يخلص (عادة من دقيقتين لـ 6 دقايق)."));
+  return send(id,(okText||"✅ استلمت طلب الريل")+(j.busy?"\n⏳ في ضغط بسيط دلوقتي، أول ما الفيديو يخلص هيوصلك.":(okText?"":"\nهيوصلك الفيديو هنا أول ما يخلص.")));
 }
 
 export async function reelCallback(q,d,id,user){
