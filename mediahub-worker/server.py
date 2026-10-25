@@ -520,8 +520,9 @@ def process(j):
   job['busy']=False
 
 # ---------- reel studio ----------
-reel_pool=ThreadPoolExecutor(max_workers=1)   # one render at a time: the free CPU is tiny and downloads must stay responsive
-REEL_QUEUE=int(os.getenv('REEL_QUEUE','4'))
+REEL_PAR=int(os.getenv('REEL_PAR','3'))
+reel_pool=ThreadPoolExecutor(max_workers=REEL_PAR)   # reels are the priority: several render side by side (downloads may wait)
+REEL_QUEUE=int(os.getenv('REEL_QUEUE','60'))
 reel_q=[];reel_lock=threading.Lock()
 
 def tg_video(chat,path,caption,info,markup=None):
@@ -619,12 +620,13 @@ def quran_reel(spec,work,lib,logo,on_stage=None):
    out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=[str(p) for p in imgs],logo=logo,clips=())
    return out,info,reels.caption(info)+'\n🖼 الصور: '+cr
  if spec.get('bgsrc')=='stock' or (not lib and spec.get('bgsrc')!='img'):
-  n=1 if spec.get('bgmode')=='static' else max(2,min(max(int(spec.get('bgn') or 4),int(float(spec.get('maxdur') or 30)/max(3.0,float(spec.get('bgsec') or 5)))+2),8))   # enough clips to cover the reel without repeats
   orient='h' if spec.get('ar')=='16:9' else 'v'
-  clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
-  if not clips:   # live: one fresh, screened video for the whole reel, deleted with the work folder
-   v,src,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work,hd=bool(spec.get('hd')))
-   if v:clips,credit=[v],[src];spec['dim']=reels.dim_for(band);spec['plate']=reels.plate_for(band)
+  # exclusive: fresh 1080p+ video(s) fetched now for this subscriber only, never reused for anyone else
+  vs,credit,band=stock.live_pick(spec.get('theme') or 'mix',orient,float(spec.get('maxdur') or 30),work,hd=bool(spec.get('hd')))
+  if vs:clips=vs;spec['dim']=reels.dim_for(band);spec['plate']=reels.plate_for(band)
+  else:   # providers down: unused clips from the local pool (also marked as given out)
+   n=1 if spec.get('bgmode')=='static' else max(2,min(int(float(spec.get('maxdur') or 30)/max(3.0,float(spec.get('bgsec') or 5)))+2,8))
+   clips,credit=stock.pick(spec.get('theme') or 'mix',orient,n)
   if clips:lib=[]
  out,info=reels.render_quran(spec,work,DATA/'qcache',on_stage=on_stage,library=lib,logo=logo,clips=clips)
  cap=reels.caption(info)+(('\n🎞️ الخلفية: '+' و'.join(credit)) if credit else '')
@@ -713,7 +715,7 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
   if spec['items']:
    clean=[]
    for it in spec['items'][:5]:
-    x={'surah':int(it.get('surah') or 0),'frm':int(it.get('frm') or 0),'to':int(it.get('to') or 0) or None,'reciter':str(it.get('reciter') or ''),'theme':str(it.get('theme') or 'mix'),'maxdur':max(5.0,min(float(it.get('maxdur') or spec['maxdur']),spec['cap'],30.0))}   # pack reels stay light: 30 s max
+    x={'surah':int(it.get('surah') or 0),'frm':int(it.get('frm') or 0),'to':int(it.get('to') or 0) or None,'reciter':(lambda r:'afasy' if r.endswith(('_mj','_mu')) else r)(str(it.get('reciter') or '')),'theme':str(it.get('theme') or 'mix'),'maxdur':max(5.0,min(float(it.get('maxdur') or spec['maxdur']),spec['cap'],30.0))}   # pack reels stay light: 30 s max
     if x['theme'] not in stock.THEMES:x['theme']='mix'
     try:reels.validate({**spec,**x})
     except Exception:raise HTTPException(422,'invalid reel')
@@ -734,7 +736,7 @@ def reel_create(p:ReelReq,x_worker_secret:str|None=Header(None)):
   if len(reel_q)>=REEL_QUEUE:raise HTTPException(429,'queue full')
   rid=str(p.user_id)+'-'+uuid.uuid4().hex[:10];reel_q.append(rid);pos=len(reel_q)
  reel_pool.submit(reel_job,rid,spec)
- return {'ok':True,'id':rid,'position':pos}
+ return {'ok':True,'id':rid,'position':pos,'busy':pos>REEL_PAR}
 
 # ---------- housekeeping ----------
 def janitor_pass(now=None):

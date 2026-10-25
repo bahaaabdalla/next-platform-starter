@@ -118,7 +118,7 @@ def fetch_ayah(cache,folder,s,a):
  r=httpx.get(EVERYAYAH+folder+'/'+f.name,timeout=httpx.Timeout(25,connect=10),follow_redirects=True)
  r.raise_for_status()
  if len(r.content)<1000:raise RuntimeError('empty recitation file')
- tmp=f.with_suffix('.part');tmp.write_bytes(r.content);tmp.replace(f)
+ tmp=f.with_suffix('.%d.%d.part'%(os.getpid(),threading.get_ident()));tmp.write_bytes(r.content);tmp.replace(f)
  return f
 
 GAP=0.0;LEAD=0.4;TAIL=0.8   # no added pause between ayat (only the reciter's own breath), silence before/after
@@ -175,7 +175,7 @@ def qdc_chapter(cache,key,s):
   meta.write_text(json.dumps({'url':af['audio_url'],'ts':ts}))
  m=json.loads(meta.read_text());ts={int(k):v for k,v in m['ts'].items()}
  if not mp3.exists() or mp3.stat().st_size<10000:
-  tmp=mp3.with_suffix('.part')
+  tmp=mp3.with_suffix('.%d.%d.part'%(os.getpid(),threading.get_ident()))
   with httpx.stream('GET',m['url'],timeout=httpx.Timeout(60,connect=15),follow_redirects=True) as r:
    r.raise_for_status();n=0
    with open(tmp,'wb') as fh:

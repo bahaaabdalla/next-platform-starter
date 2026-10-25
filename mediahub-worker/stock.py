@@ -17,6 +17,15 @@ import httpx
 DATA=Path(os.getenv('MEDIA_DATA_DIR','/tmp/bmediahub'))
 ROOT=DATA/'stock';ROOT.mkdir(parents=True,exist_ok=True)
 INDEX=ROOT/'pool.json';_lock=threading.Lock()
+# every background video handed to a subscriber is recorded here and never handed to anyone else
+USED=ROOT/'used.json';_ulock=threading.Lock()
+def _used():
+    try:return set(json.loads(USED.read_text()))
+    except Exception:return set()
+def is_used(cid):return cid in _used()
+def mark_used(cid):
+    with _ulock:
+        u=_used();u.add(cid);tmp=USED.with_suffix('.tmp');tmp.write_text(json.dumps(sorted(u)));tmp.replace(USED)
 PEXELS_KEY=os.getenv('PEXELS_API_KEY','');PIXABAY_KEY=os.getenv('PIXABAY_API_KEY','')
 CLIP_SEC=12.0
 
@@ -164,12 +173,14 @@ def themes_available(orient):
 
 def pick(theme,orient,n):
     """n approved clip paths for a reel: the theme's clips, topped up from any theme; [] if the pool is empty."""
-    ok=[i for i in load() if i['status']=='ok' and i['orient']==orient and (ROOT/i['file']).exists()]
+    used=_used()
+    ok=[i for i in load() if i['status']=='ok' and i['orient']==orient and (ROOT/i['file']).exists() and i.get('id') not in used and Path(i['file']).stem.split('_')[0] not in used]
     if not ok:return [],[]
     mine=[i for i in ok if i['theme']==theme] if theme and theme!='mix' else ok
     random.shuffle(mine);sel=mine[:n]
     if len(sel)<n:
         rest=[i for i in ok if i not in sel];random.shuffle(rest);sel+=rest[:n-len(sel)]
+    for i in sel:mark_used(Path(i['file']).stem.split('_')[0])
     return [ROOT/i['file'] for i in sel],sorted({i['src'] for i in sel})
 
 
@@ -264,38 +275,50 @@ def pixabay_live(query,orient,page,strict=False,editors=False):
         if best:out.append({'sharp':max(best.get('width') or 0,best.get('height') or 0)>=3000 or (best.get('height') or 0)>(best.get('width') or 0),'id':'pb%d'%v['id'],'url':best['url'],'author':v.get('user',''),'link':v.get('pageURL',''),'src':'Pixabay','dur':v.get('duration',0),'pop':int(v.get('downloads',0))+20*int(v.get('likes',0)),'ed':editors})
     return out
 
-def live_pick(theme,orient,dur,work,tries=6,hd=False):
-    """Search, download and screen one video for this reel. Returns (path, source, band) or (None, None, 0).
-    Rejects people and clips too bright behind the verses or too dark overall; if every candidate fails only on
-    brightness, the least bright one is used (the render darkens it). The file is deleted with the work folder."""
-    spare=None
-    for c in live_candidates(theme,orient,min(dur,8),hd)[:tries]:
-        dest=Path(work)/('stock_%s.mp4'%c['id'])
-        try:
-            with httpx.stream('GET',c['url'],timeout=httpx.Timeout(90,connect=20),follow_redirects=True) as r:
-                r.raise_for_status();n=0
-                with open(dest,'wb') as fh:
-                    for ch in r.iter_bytes(1<<16):
-                        n+=len(ch)
-                        if n>150*1024*1024:raise RuntimeError('too big')
-                        fh.write(ch)
-            people,band,mean=screen(dest,work,theme in CROWD_OK)
-            if people:print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);continue
-            if not tone_ok(band,mean):
-                print('stock skip (tone) band %.0f mean %.0f'%(band,mean),c['id'],flush=True)
-                score=max(band-LUMA_HI,LUMA_LO-mean)
-                if spare is None or score<spare[0]:
-                    if spare:spare[1].unlink(missing_ok=True)
-                    spare=(score,dest,c['src'],band)
-                else:dest.unlink(missing_ok=True)
-                continue
-            if spare:spare[1].unlink(missing_ok=True)
-            print('stock ok band %.0f mean %.0f'%(band,mean),c['id'],flush=True)
-            return dest,c['src'],band
-        except Exception as e:
-            print('stock skip',c['id'],type(e).__name__,str(e)[:100],flush=True);dest.unlink(missing_ok=True)
-    if spare:return spare[1],spare[2],spare[3]
-    return None,None,0.0
+def _fetch_ok(c,theme,work):
+    """Download + screen one candidate. Returns (path, band, tone_ok) or None if it has people / failed."""
+    dest=Path(work)/('stock_%s.mp4'%c['id'])
+    try:
+        with httpx.stream('GET',c['url'],timeout=httpx.Timeout(90,connect=20),follow_redirects=True) as r:
+            r.raise_for_status();n=0
+            with open(dest,'wb') as fh:
+                for ch in r.iter_bytes(1<<16):
+                    n+=len(ch)
+                    if n>150*1024*1024:raise RuntimeError('too big')
+                    fh.write(ch)
+        people,band,mean=screen(dest,work,theme in CROWD_OK)
+        if people:print('stock skip (people)',c['id'],flush=True);dest.unlink(missing_ok=True);return None
+        return dest,band,tone_ok(band,mean),max(band-LUMA_HI,LUMA_LO-mean)
+    except Exception as e:
+        print('stock skip',c['id'],type(e).__name__,str(e)[:100],flush=True);dest.unlink(missing_ok=True);return None
+
+def live_pick(theme,orient,dur,work,tries=10,hd=False):
+    """Fresh, exclusive background video(s) for one reel, fetched now from Pexels/Pixabay (1080p+) and never given
+    to another subscriber. Clips long enough for the whole reel come first; otherwise up to 3 clips are joined.
+    Returns (paths, sources, band) or ([], [], 0). Files are deleted with the work folder."""
+    used=_used()
+    cands=[c for c in live_candidates(theme,orient,min(dur,8),hd) if c['id'] not in used]
+    cands.sort(key=lambda c:c['dur']<dur)   # stable: keeps the quality order inside each group
+    got=[];spare=None;have=0.0
+    for c in cands[:tries]:
+        r=_fetch_ok(c,theme,work)
+        if not r:continue
+        dest,band,good,score=r
+        if not good:
+            print('stock skip (tone) band %.0f'%band,c['id'],flush=True)
+            if spare is None or score<spare[0]:
+                if spare:spare[1].unlink(missing_ok=True)
+                spare=(score,dest,c,band)
+            else:dest.unlink(missing_ok=True)
+            continue
+        print('stock ok band %.0f'%band,c['id'],flush=True)
+        got.append((dest,c,band));have+=c['dur']
+        if have*1.6>=dur or len(got)>=3:break
+    if not got and spare:got=[(spare[1],spare[2],spare[3])]
+    elif spare:spare[1].unlink(missing_ok=True)
+    for _,c,_ in got:mark_used(c['id'])
+    if not got:return [],[],0.0
+    return [g[0] for g in got],sorted({g[1]['src'] for g in got}),got[0][2]
 
 # ---------- high-resolution free photos (Wikimedia Commons) for themes where good video is scarce ----------
 # Only free licences (public domain, CC0, CC BY, CC BY-SA); the authors are credited in the reel caption.
