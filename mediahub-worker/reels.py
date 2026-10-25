@@ -538,6 +538,23 @@ def backgrounds(W,H,work,n,library=()):
  seed=random.randrange(1000)
  return [placeholder_bg(W,H,seed+i,work/('bg%d.jpg'%i)) for i in range(n)]
 
+def pauses(audio):
+ """[(start, end)] of the reciter's pauses in the final audio (where he stops at a waqf / takes a breath)."""
+ try:
+  p=subprocess.run(['ffmpeg','-hide_banner','-nostdin','-i',str(audio),'-af','silencedetect=noise=-30dB:d=0.22','-f','null','-'],capture_output=True,timeout=120)
+  out=p.stderr.decode('utf-8','ignore');st=[float(x) for x in re.findall(r'silence_start: ([\d.]+)',out)];en=[float(x) for x in re.findall(r'silence_end: ([\d.]+)',out)]
+  return list(zip(st,en))
+ except Exception:return []
+
+def snap_pause(est,lo,hi,sils,win):
+ """Move a line change from its text-length estimate to the nearest real pause (middle of it) within `win` seconds."""
+ if lo>=hi:return est
+ best=None
+ for a,b in sils:
+  m=(a+b)/2
+  if lo<=m<=hi and abs(m-est)<=win and (best is None or abs(m-est)<abs(best-est)):best=m
+ return best if best is not None else max(lo,min(est,hi))
+
 def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
  """Returns (video_path, info). Raises ValueError for bad input, RuntimeError for failures."""
  s,a,to=validate(spec)
@@ -556,15 +573,17 @@ def render_quran(spec,work,cache,on_stage=None,library=(),logo=None,clips=()):
   if on_stage:on_stage('render')
   audio,total_v,spans=recitation(ayat,work,hardcap)
  # verse pages timed to their recitation (each ayah's pages share its spoken time; the last one holds through the pause)
+ sils=pauses(audio) if audio else []   # the reciter's breaths: line changes snap to them
  pages=[];k=0;fkey=str(spec.get('font') or 'hafs');fpath=vfont(spec);stroke=str(spec.get('stroke') or 'none')
  for num,t0,t1 in spans:
   raw=ayah_text(s,num)
   text=(raw if fkey=='hafs' else raw.translate(TANWEEN))+ayah_mark(num,fkey)   # Hafs reads the King Fahd encoding as is
-  tk=str(spec.get('tashkeel') or 'full')
+  tk=str(spec.get('tashkeel') or 'light')
   pg=[[diacritics(l,tk) for l in p] for p in ayah_pages(text,W,H,fpath)];weights=[sum(len(l) for l in p) for p in pg];tot=sum(weights) or 1
-  t=t0
+  t=t0;acc=0
   for i,(p,wt) in enumerate(zip(pg,weights)):
-   end=t1 if i==len(pg)-1 else t+(t1-t0)*wt/tot
+   acc+=wt
+   end=t1 if i==len(pg)-1 else snap_pause(t0+(t1-t0)*acc/tot,t+0.6,t1-0.4,sils,(t1-t0)*0.35)
    pages.append([text_png(p,W,H,work/('p%03d.png'%k),fpath,stroke,float(spec.get('plate') or 0)),t,min(end,total_v)]);k+=1;t=end
  ayat=[a for a in ayat if any(a[0]==x[0] for x in spans)]
  last=ayat[-1][0]
