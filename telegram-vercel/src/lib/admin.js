@@ -2,6 +2,12 @@ import {pipe,cmd,obj} from "./redis.js";
 import {payStatsText,sourcesText} from "./pay.js";
 import {webLink,webRevoke} from "./web.js";
 import {tg,send,botId,sleep} from "./tg.js";
+// failed recipients with their name and why (blocked the bot, deleted account, …)
+async function failList(bad){
+  const us=await pipe(bad.slice(0,30).map(([u])=>["HMGET",P+"u:"+u,"name","uname"]));
+  const why=m=>/blocked/i.test(m)?"عامل بلوك للبوت":/deactivated/i.test(m)?"الحساب اتمسح":/not found/i.test(m)?"الشات مش موجود":"خطأ: "+String(m).slice(0,60);
+  return bad.slice(0,30).map(([u,m],k)=>{const [n,un]=us[k]||[];return "• "+(n||"بدون اسم")+(un?" @"+un:"")+" ("+u+") — "+why(m)}).join("\n")+(bad.length>30?"\n… و"+(bad.length-30)+" كمان":"");
+}
 import {P,today,monthKey,getCfg,account,describe,downloads,PLANS,planKey,reelPlan} from "./quota.js";
 import {NAME,SHORT,LONG,ADMIN_COMMANDS,COMMANDS} from "./texts.js";
 const GB=1e9,fmtB=n=>n>=GB?(n/GB).toFixed(2)+" GB":(n/1e6).toFixed(1)+" MB";
@@ -108,9 +114,13 @@ export async function adminCommand(body,id){
   case "/tutorial":{if((a[0]||"").toLowerCase()==="off"){await pipe([["HDEL",P+"cfg","tutvid"],["DEL",P+"admcap:"+id]]);await send(id,"✅ اتشال فيديو الشرح.");return true}
     await cmd("SET",P+"admcap:"+id,"tut","EX","1800");await send(id,"🎥 ابعت فيديو الشرح دلوقتي. هيتحفظ، ويتبعت أوتوماتيك لكل مشترك أول ما اشتراكه يتفعّل، وكمان في /help.\n/tutorial off لشيله.");return true}
   case "/broadcast":{if(!arg){await send(id,"الاستخدام: /broadcast نص الرسالة");return true}
-    const ids=await cmd("SMEMBERS",P+"users");let ok=0,fail=0,i=0;const end=Date.now()+48000;
-    for(;i<ids.length&&Date.now()<end;i++){try{await send(ids[i],arg);ok++}catch{fail++}await sleep(40)}
-    await send(id,`📣 تم الإرسال: ${ok} · فشل: ${fail}`+(i<ids.length?` · متبقي ${ids.length-i} (الوقت خلص، أعد الإرسال لاحقًا)`:""));return true}
+    const ids=await cmd("SMEMBERS",P+"users");let ok=0,fail=0,i=0;const end=Date.now()+48000,bad=[];
+    for(;i<ids.length&&Date.now()<end;i++){try{await send(ids[i],arg);ok++}catch(e){fail++;bad.push([ids[i],e.message])}await sleep(40)}
+    await send(id,`📣 تم الإرسال: ${ok} · فشل: ${fail}`+(i<ids.length?` · متبقي ${ids.length-i} (الوقت خلص، أعد الإرسال لاحقًا)`:"")+(bad.length?"\n\n"+await failList(bad):""));return true}
+  case "/bcheck":{   // who can't receive messages (blocked the bot / deleted account), without sending anything visible
+    const ids=await cmd("SMEMBERS",P+"users");const bad=[];const end=Date.now()+48000;let i=0;
+    for(;i<ids.length&&Date.now()<end;i++){try{await tg("sendChatAction",{chat_id:ids[i],action:"typing"})}catch(e){bad.push([ids[i],e.message])}await sleep(35)}
+    await send(id,`🔎 اتفحص ${i} من ${ids.length} مستخدم · مش بيستقبلوا: ${bad.length}`+(bad.length?"\n\n"+await failList(bad):""));return true}
   }
   return false;
 }
